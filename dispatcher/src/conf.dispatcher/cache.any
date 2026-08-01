@@ -6,6 +6,7 @@
   {
     /0001 { /glob "*" /type "allow" }
    /0002 { /glob "/content/*" /type "allow" }
+   /0003 { /glob "/bin/*" /type "allow" }
   }
 
   /ignoreUrlParams
