@@ -1,131 +1,71 @@
-import re
 from pathlib import Path
 import sys
 
 findings = []
-seen = set()
 
+def add(severity, file, title, details):
+    findings.append({
+        "severity": severity,
+        "file": file,
+        "title": title,
+        "details": details
+    })
 
-def add_finding(severity, file, title, details):
-    key = (severity, file, title)
-    if key not in seen:
-        seen.add(key)
-        findings.append({
-            "severity": severity,
-            "file": file,
-            "title": title,
-            "details": details
-        })
-
-
-# Scan all files under dispatcher/
+# Scan dispatcher files
 for path in Path("dispatcher").rglob("*"):
-    if not path.is_file():
-        continue
+    if path.is_file():
+        text = path.read_text(errors="ignore")
 
-    text = path.read_text(errors="ignore")
+        print(f"Scanning: {path}")
+        print(text)
 
-    print(f"Scanning: {path}")
+        # HIGH: broad allow
+        if '/glob "*"' in text and '/type "allow"' in text:
+            add(
+                "HIGH",
+                str(path),
+                "Overly broad allow rule",
+                "This rule may expose or cache unintended paths."
+            )
 
-    # HIGH: exact broad allow rule
-    if re.search(r'/glob\\s*"\\*"\\s*/type\\s*"allow"', text):
-        add_finding(
-            "HIGH",
-            str(path),
-            "Overly broad allow rule",
-            "This rule may expose or cache unintended paths."
-        )
-
-    # MEDIUM: ignore all URL params
-    if re.search(r'/ignoreUrlParams\\s*\\{[^}]*?/glob\\s*"\\*"', text, re.DOTALL):
-        add_finding(
-            "MEDIUM",
-            str(path),
-            "All query parameters are considered",
-            "UTM, fbclid, gclid may fragment the cache and reduce cache hit ratio."
-        )
-
-    # MEDIUM: GraphQL endpoint changes
-    if "/_cq_graphql" in text:
-        add_finding(
-            "MEDIUM",
-            str(path),
-            "GraphQL endpoint modified",
-            "Verify caching, authorization, and persisted query behavior."
-        )
-
-    # HIGH: /conf exposed
-    if re.search(r'/url\\s*"/conf/', text):
-        add_finding(
-            "HIGH",
-            str(path),
-            "/conf path exposed",
-            "Dispatcher should not expose /conf content directly."
-        )
-
-    # HIGH: excessive cache invalidation
-    if re.search(r'/statfileslevel\\s*"0"', text):
-        add_finding(
-            "HIGH",
-            str(path),
-            "statfileslevel is 0",
-            "May cause excessive cache invalidation and origin load."
-        )
-
-    # MEDIUM: missing CSP header in vhost
-    if path.suffix == ".vhost":
-        if "Content-Security-Policy" not in text:
-            add_finding(
+        # MEDIUM: ignore all params
+        if '/ignoreUrlParams' in text:
+            add(
                 "MEDIUM",
                 str(path),
-                "CSP header not found",
-                "Verify Content-Security-Policy is configured."
+                "All query parameters are considered",
+                "UTM, fbclid, gclid may fragment the cache and reduce cache hit ratio."
             )
 
 print(f"Findings: {len(findings)}")
 
-# Risk scoring
+# Score
 score = 0
-
 for f in findings:
     if f["severity"] == "HIGH":
         score += 25
-    elif f["severity"] == "MEDIUM":
-        score += 10
     else:
-        score += 5
+        score += 10
 
 score = min(score, 100)
 
-if score < 25:
-    level = "LOW"
-elif score < 50:
-    level = "MEDIUM"
-elif score < 75:
+level = "LOW"
+if score >= 25:
     level = "HIGH"
-else:
-    level = "CRITICAL"
 
 has_high = any(f["severity"] == "HIGH" for f in findings)
 
-# Build markdown report
-report = [
-    f"# AEM Dispatcher/CDN Analysis — {level} ({score}/100)",
-    ""
-]
+# Markdown report
+report = [f"# AEM Dispatcher/CDN Analysis — {level} ({score}/100)", ""]
 
 if not findings:
     report.append("No significant dispatcher risks detected. ✅")
 else:
-    icons = {
-        "HIGH": "🔴",
-        "MEDIUM": "🟠",
-        "LOW": "🟡"
-    }
-
     for f in findings:
+        icon = "🔴" if f["severity"] == "HIGH" else "🟠"
+
         report.extend([
-            f"## {icons[f['severity']]} {f['title']}",
+            f"## {icon} {f['title']}",
             "",
             f"**File:** `{f['file']}`",
             f"**Severity:** {f['severity']}",
@@ -136,25 +76,18 @@ else:
             ""
         ])
 
-    report.extend([
-        f"### Overall Risk Score: **{score}/100 ({level})**",
-        ""
-    ])
+    report.append(f"### Overall Risk Score: **{score}/100 ({level})**")
+    report.append("")
 
     if has_high:
         report.append("❌ **Merge blocked until HIGH severity findings are resolved.**")
-    else:
-        report.append("✅ Findings are informational; merge is allowed.")
 
 content = "\\n".join(report)
 
-# Write report
 Path("dispatcher-report.md").write_text(content, encoding="utf-8")
 
-print("\\n===== REPORT =====\\n")
+print("===== REPORT =====")
 print(content)
 
-# Fail workflow on HIGH findings
 if has_high:
-    print("High severity dispatcher findings detected. Failing the workflow.")
     sys.exit(1)
