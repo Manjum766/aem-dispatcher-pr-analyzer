@@ -7,9 +7,9 @@ findings = []
 for path in Path("dispatcher").rglob("*"):
     if path.is_file():
         text = path.read_text(errors="ignore")
-print(f"Scanning: {path}")
+
         # Rule 1: overly broad allow
-      print(text)
+      
 if '/glob "*"' in text and '/type "allow"' in text:
     findings.append({
         "severity": "HIGH",
