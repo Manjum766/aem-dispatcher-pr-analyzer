@@ -5,6 +5,7 @@
   /rules
   {
     /0001 { /glob "*" /type "allow" }
+   /0002 { /glob "/content/*" /type "allow" }
   }
 
   /ignoreUrlParams
