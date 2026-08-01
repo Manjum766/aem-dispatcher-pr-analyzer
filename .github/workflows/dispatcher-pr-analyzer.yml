@@ -21,11 +21,12 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Run Dispatcher Analyzer
+      - name: Run Analyzer
         run: |
           python .github/scripts/dispatcher_analyzer.py
 
-      - name: Comment PR
+      - name: Create or Update PR Comment
+        if: always()
         uses: marocchino/sticky-pull-request-comment@v2
         with:
           path: dispatcher-report.md
