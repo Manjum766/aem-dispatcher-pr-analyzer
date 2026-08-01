@@ -1,0 +1,14 @@
+/cache
+{
+  /docroot "/var/www/html"
+
+  /rules
+  {
+    /0001 { /glob "*" /type "allow" }
+  }
+
+  /ignoreUrlParams
+  {
+    /0001 { /glob "*" /type "allow" }
+  }
+}
