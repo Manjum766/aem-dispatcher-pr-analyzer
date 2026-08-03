@@ -1,0 +1,78 @@
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerTemplate
+metadata:
+  name: pr-review-trigger-template
+  labels:
+    app.kubernetes.io/part-of: pr-review-agent
+spec:
+  params:
+    - name: REPO_URL
+      description: Git clone URL.
+    - name: REVISION
+      description: PR head commit SHA.
+    - name: PR_NUMBER
+      description: GitHub pull request number.
+    - name: REPO_OWNER
+      description: GitHub owner (org or user).
+    - name: REPO_NAME
+      description: GitHub repository name.
+    - name: SONAR_BRANCH
+      description: PR head branch name.
+      default: ""
+    - name: SONAR_PR_BASE
+      description: PR target branch name.
+      default: main
+
+  resourcetemplates:
+    - apiVersion: tekton.dev/v1beta1
+      kind: PipelineRun
+      metadata:
+        # generateName ensures a unique name for every PipelineRun
+        generateName: pr-review-run-
+        labels:
+          app.kubernetes.io/part-of: pr-review-agent
+          triggers.tekton.dev/trigger: pr-review-trigger
+      spec:
+        pipelineRef:
+          name: pr-review-pipeline
+
+        params:
+          - name: REPO_URL
+            value: $(tt.params.REPO_URL)
+          - name: REVISION
+            value: $(tt.params.REVISION)
+          - name: PR_NUMBER
+            value: $(tt.params.PR_NUMBER)
+          - name: REPO_OWNER
+            value: $(tt.params.REPO_OWNER)
+          - name: REPO_NAME
+            value: $(tt.params.REPO_NAME)
+          - name: SONAR_PROJECT_KEY
+            # Override this default with your actual SonarQube project key.
+            value: aem-dispatcher-pr-analyzer
+          - name: SONAR_BRANCH
+            value: $(tt.params.SONAR_BRANCH)
+          - name: SONAR_PR_BASE
+            value: $(tt.params.SONAR_PR_BASE)
+          - name: SNYK_ORG
+            value: ""
+
+        workspaces:
+          # Cloned source — ephemeral PVC per PipelineRun
+          - name: source
+            volumeClaimTemplate:
+              spec:
+                accessModes:
+                  - ReadWriteOnce
+                resources:
+                  requests:
+                    storage: 1Gi
+          # Shared output workspace for scan result JSON files
+          - name: output
+            volumeClaimTemplate:
+              spec:
+                accessModes:
+                  - ReadWriteOnce
+                resources:
+                  requests:
+                    storage: 500Mi

@@ -1,0 +1,35 @@
+apiVersion: triggers.tekton.dev/v1beta1
+kind: EventListener
+metadata:
+  name: pr-review-event-listener
+  labels:
+    app.kubernetes.io/part-of: pr-review-agent
+spec:
+  # ServiceAccount must have permission to create PipelineRuns and read Secrets.
+  # See tekton/README.md for the required RBAC setup.
+  serviceAccountName: tekton-triggers-sa
+
+  triggers:
+    - name: github-pr-trigger
+      interceptors:
+        # Filter: only process pull_request events with the listed actions.
+        - ref:
+            name: github
+            kind: ClusterInterceptor
+          params:
+            - name: eventTypes
+              value:
+                - pull_request
+        - ref:
+            name: cel
+            kind: ClusterInterceptor
+          params:
+            - name: filter
+              value: >
+                body.action in ['opened', 'synchronize', 'reopened']
+
+      bindings:
+        - ref: pr-review-trigger-binding
+
+      template:
+        ref: pr-review-trigger-template

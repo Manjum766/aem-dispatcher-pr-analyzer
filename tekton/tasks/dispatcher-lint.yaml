@@ -1,0 +1,41 @@
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: dispatcher-lint
+  labels:
+    app.kubernetes.io/part-of: pr-review-agent
+spec:
+  description: >
+    Runs dispatcher-lint.sh against all dispatcher configuration files in the
+    PR branch. Detects security anti-patterns (DISP-001 through DISP-008) and
+    writes dispatcher-result.json to the shared output workspace.
+    Uses onError: continue so lint findings do not abort the pipeline.
+
+  workspaces:
+    - name: source
+      description: Cloned repository root.
+    - name: output
+      description: Shared workspace where result JSON files are written.
+
+  steps:
+    - name: lint
+      image: bash:5.2
+      onError: continue
+      env:
+        - name: DISPATCHER_DIR
+          value: $(workspaces.source.path)/dispatcher/src
+        - name: OUTPUT_FILE
+          value: $(workspaces.output.path)/dispatcher-result.json
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+        # Copy the script from the source workspace (it is part of the repo)
+        SCRIPT="$(workspaces.source.path)/tekton/scripts/dispatcher-lint.sh"
+        if [ ! -f "$SCRIPT" ]; then
+          echo "dispatcher-lint.sh not found at ${SCRIPT}" >&2
+          echo '{"status":"failed","total_findings":0,"critical":0,"high":0,"findings":[{"file":"N/A","line":0,"severity":"HIGH","rule":"DISP-000","message":"dispatcher-lint.sh was not found in the repository"}]}' \
+            > "${OUTPUT_FILE}"
+          exit 0
+        fi
+        chmod +x "$SCRIPT"
+        bash "$SCRIPT"

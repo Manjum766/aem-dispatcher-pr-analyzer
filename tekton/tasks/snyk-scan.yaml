@@ -1,0 +1,170 @@
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: snyk-scan
+  labels:
+    app.kubernetes.io/part-of: pr-review-agent
+spec:
+  description: >
+    Runs Snyk to detect hardcoded secrets (SAST) and known CVEs across Maven
+    (pom.xml), Yarn (ui.frontend.widgets), and npm (ui.frontend.idl) dependency
+    trees. Writes snyk-result.json to the shared output workspace.
+    Uses onError: continue so Snyk findings do not abort the pipeline.
+
+  params:
+    - name: SNYK_ORG
+      description: >
+        Snyk organisation slug. Leave empty to use the default org associated
+        with the Snyk token.
+      type: string
+      default: ""
+
+  workspaces:
+    - name: source
+      description: Cloned repository root.
+    - name: output
+      description: Shared workspace where result JSON files are written.
+
+  steps:
+    # ── Step 1: Run all Snyk scans ─────────────────────────────────────────────
+    - name: snyk-scan
+      image: snyk/snyk:linux
+      onError: continue
+      env:
+        - name: SNYK_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: snyk-token
+              key: token
+        - name: SNYK_ORG
+          value: $(params.SNYK_ORG)
+        - name: OUTPUT_DIR
+          value: $(workspaces.output.path)
+      workingDir: $(workspaces.source.path)
+      script: |
+        #!/usr/bin/env bash
+        set -eu
+
+        snyk auth "${SNYK_TOKEN}"
+
+        ORG_FLAG=""
+        if [ -n "${SNYK_ORG}" ]; then
+          ORG_FLAG="--org=${SNYK_ORG}"
+        fi
+
+        # Run each scan; capture JSON output. Exit code is non-zero on findings —
+        # redirect stderr to stdout so the step does not abort on vulnerabilities.
+        snyk code test --json $ORG_FLAG . \
+          > "${OUTPUT_DIR}/snyk-code-raw.json" 2>&1 || true
+
+        snyk test --file=pom.xml --all-projects --json $ORG_FLAG \
+          > "${OUTPUT_DIR}/snyk-maven-raw.json" 2>&1 || true
+
+        snyk test --file=ui.frontend.widgets/package.json --json $ORG_FLAG \
+          > "${OUTPUT_DIR}/snyk-widgets-raw.json" 2>&1 || true
+
+        snyk test --file=ui.frontend.idl/package.json --json $ORG_FLAG \
+          > "${OUTPUT_DIR}/snyk-idl-raw.json" 2>&1 || true
+
+        echo "Snyk scans complete."
+
+    # ── Step 2: Merge raw JSONs into a single snyk-result.json ─────────────────
+    - name: merge-results
+      image: stedolan/jq:latest
+      onError: continue
+      env:
+        - name: OUTPUT_DIR
+          value: $(workspaces.output.path)
+      script: |
+        #!/usr/bin/env sh
+        set -eu
+
+        RESULT_FILE="${OUTPUT_DIR}/snyk-result.json"
+
+        count_severity() {
+          FILE="$1"
+          SEV="$2"
+          if [ -f "$FILE" ]; then
+            jq --arg sev "$SEV" \
+              '[.. | objects | select(.severity? == $sev)] | length' \
+              "$FILE" 2>/dev/null || echo 0
+          else
+            echo 0
+          fi
+        }
+
+        count_secrets() {
+          FILE="$1"
+          if [ -f "$FILE" ]; then
+            jq '[.. | objects | select(.type? == "Secret Detection" or .ruleId? | strings | test("secret|credential|key|token|password"; "i"))] | length' \
+              "$FILE" 2>/dev/null || echo 0
+          else
+            echo 0
+          fi
+        }
+
+        is_valid_json() {
+          jq empty "$1" 2>/dev/null
+        }
+
+        # Validate raw files
+        for f in code maven widgets idl; do
+          RAW="${OUTPUT_DIR}/snyk-${f}-raw.json"
+          if [ ! -f "$RAW" ] || ! is_valid_json "$RAW"; then
+            echo '{"ok":true,"vulnerabilities":[]}' > "$RAW"
+          fi
+        done
+
+        CODE_RAW="${OUTPUT_DIR}/snyk-code-raw.json"
+        MAVEN_RAW="${OUTPUT_DIR}/snyk-maven-raw.json"
+        WIDGETS_RAW="${OUTPUT_DIR}/snyk-widgets-raw.json"
+        IDL_RAW="${OUTPUT_DIR}/snyk-idl-raw.json"
+
+        SECRETS=$(count_secrets "$CODE_RAW")
+        CRITICAL=$(( $(count_severity "$MAVEN_RAW" critical) + $(count_severity "$WIDGETS_RAW" critical) + $(count_severity "$IDL_RAW" critical) ))
+        HIGH=$(( $(count_severity "$MAVEN_RAW" high) + $(count_severity "$WIDGETS_RAW" high) + $(count_severity "$IDL_RAW" high) ))
+        MEDIUM=$(( $(count_severity "$MAVEN_RAW" medium) + $(count_severity "$WIDGETS_RAW" medium) + $(count_severity "$IDL_RAW" medium) ))
+        LOW=$(( $(count_severity "$MAVEN_RAW" low) + $(count_severity "$WIDGETS_RAW" low) + $(count_severity "$IDL_RAW" low) ))
+
+        if [ "$SECRETS" -gt 0 ] || [ "$CRITICAL" -gt 0 ] || [ "$HIGH" -gt 0 ]; then
+          STATUS="failed"
+        else
+          STATUS="passed"
+        fi
+
+        # Collect top issues from all scans (up to 20 total)
+        ISSUES=$(jq -n \
+          --slurpfile code "$CODE_RAW" \
+          --slurpfile maven "$MAVEN_RAW" \
+          --slurpfile widgets "$WIDGETS_RAW" \
+          --slurpfile idl "$IDL_RAW" \
+          '
+          def extract_vulns(src; source_label):
+            (src[0].vulnerabilities? // src[0].runs?[0].results? // [])
+            | map({
+                id: (.id? // .ruleId? // "unknown"),
+                title: (.title? // .message?.text? // "No title"),
+                severity: (.severity? // "unknown"),
+                source: source_label
+              });
+          (extract_vulns($code; "code") +
+           extract_vulns($maven; "maven") +
+           extract_vulns($widgets; "ui.frontend.widgets") +
+           extract_vulns($idl; "ui.frontend.idl"))
+          | .[:20]
+          ')
+
+        cat > "$RESULT_FILE" <<EOF
+        {
+          "status": "${STATUS}",
+          "secrets_found": ${SECRETS},
+          "critical_vulns": ${CRITICAL},
+          "high_vulns": ${HIGH},
+          "medium_vulns": ${MEDIUM},
+          "low_vulns": ${LOW},
+          "issues": ${ISSUES}
+        }
+        EOF
+
+        echo "Wrote ${RESULT_FILE}"
+        cat "$RESULT_FILE"

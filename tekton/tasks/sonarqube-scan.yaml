@@ -1,0 +1,150 @@
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: sonarqube-scan
+  labels:
+    app.kubernetes.io/part-of: pr-review-agent
+spec:
+  description: >
+    Runs SonarQube analysis against the PR branch and polls the Quality Gate
+    status. Writes sonar-result.json to the shared output workspace.
+    Uses onError: continue so a SonarQube failure does not abort the pipeline.
+
+  params:
+    - name: SONAR_PROJECT_KEY
+      description: SonarQube project key (must already exist in SonarQube).
+      type: string
+    - name: SONAR_BRANCH
+      description: Name of the PR head branch.
+      type: string
+    - name: SONAR_PR_KEY
+      description: GitHub pull request number (used for SonarQube PR decoration).
+      type: string
+    - name: SONAR_PR_BASE
+      description: Name of the target / base branch of the PR.
+      type: string
+      default: main
+
+  workspaces:
+    - name: source
+      description: Cloned repository root.
+    - name: output
+      description: Shared workspace where result JSON files are written.
+
+  steps:
+    # ── Step 1: Run sonar-scanner ──────────────────────────────────────────────
+    - name: sonar-scan
+      image: sonarsource/sonar-scanner-cli:latest
+      onError: continue
+      env:
+        - name: SONAR_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: sonarqube-token
+              key: token
+        - name: SONAR_HOST_URL
+          valueFrom:
+            secretKeyRef:
+              name: sonarqube-url
+              key: url
+        - name: SONAR_PROJECT_KEY
+          value: $(params.SONAR_PROJECT_KEY)
+        - name: SONAR_BRANCH
+          value: $(params.SONAR_BRANCH)
+        - name: SONAR_PR_KEY
+          value: $(params.SONAR_PR_KEY)
+        - name: SONAR_PR_BASE
+          value: $(params.SONAR_PR_BASE)
+      workingDir: $(workspaces.source.path)
+      command:
+        - sonar-scanner
+      args:
+        - -Dsonar.host.url=$(SONAR_HOST_URL)
+        - -Dsonar.login=$(SONAR_TOKEN)
+        - -Dsonar.projectKey=$(SONAR_PROJECT_KEY)
+        - -Dsonar.pullrequest.key=$(SONAR_PR_KEY)
+        - -Dsonar.pullrequest.branch=$(SONAR_BRANCH)
+        - -Dsonar.pullrequest.base=$(SONAR_PR_BASE)
+        # sonar-project.properties at repo root supplies all other settings.
+
+    # ── Step 2: Poll Quality Gate and write result JSON ───────────────────────
+    - name: write-result
+      image: curlimages/curl:latest
+      onError: continue
+      env:
+        - name: SONAR_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: sonarqube-token
+              key: token
+        - name: SONAR_HOST_URL
+          valueFrom:
+            secretKeyRef:
+              name: sonarqube-url
+              key: url
+        - name: SONAR_PROJECT_KEY
+          value: $(params.SONAR_PROJECT_KEY)
+        - name: SONAR_PR_KEY
+          value: $(params.SONAR_PR_KEY)
+        - name: OUTPUT_DIR
+          value: $(workspaces.output.path)
+      script: |
+        #!/usr/bin/env sh
+        set -eu
+
+        RESULT_FILE="${OUTPUT_DIR}/sonar-result.json"
+        API_BASE="${SONAR_HOST_URL}/api"
+        AUTH="-u ${SONAR_TOKEN}:"
+
+        # Poll Quality Gate (up to 10 attempts, 10 s apart)
+        QG_STATUS="UNKNOWN"
+        ATTEMPTS=0
+        while [ $ATTEMPTS -lt 10 ]; do
+          RESPONSE=$(curl -sf $AUTH \
+            "${API_BASE}/qualitygates/project_status?projectKey=${SONAR_PROJECT_KEY}&pullRequest=${SONAR_PR_KEY}" \
+            || echo '{"projectStatus":{"status":"ERROR"}}')
+          QG_STATUS=$(echo "$RESPONSE" | grep -o '"status":"[^"]*"' | head -1 | cut -d'"' -f4)
+          if [ "$QG_STATUS" = "OK" ] || [ "$QG_STATUS" = "ERROR" ] || [ "$QG_STATUS" = "WARN" ]; then
+            break
+          fi
+          ATTEMPTS=$((ATTEMPTS + 1))
+          sleep 10
+        done
+
+        # Fetch per-metric measures
+        MEASURES=$(curl -sf $AUTH \
+          "${API_BASE}/measures/component?component=${SONAR_PROJECT_KEY}&pullRequest=${SONAR_PR_KEY}&metricKeys=bugs,vulnerabilities,code_smells,security_hotspots" \
+          || echo '{"component":{"measures":[]}}')
+
+        extract_metric() {
+          echo "$MEASURES" | grep -o "\"metric\":\"${1}\"[^}]*\"value\":\"[^\"]*\"" \
+            | grep -o '"value":"[^"]*"' | cut -d'"' -f4 || echo "0"
+        }
+
+        BUGS=$(extract_metric bugs)
+        VULNS=$(extract_metric vulnerabilities)
+        SMELLS=$(extract_metric code_smells)
+        HOTSPOTS=$(extract_metric security_hotspots)
+
+        if [ "$QG_STATUS" = "OK" ]; then
+          STATUS="passed"
+        else
+          STATUS="failed"
+        fi
+
+        DASHBOARD_URL="${SONAR_HOST_URL}/dashboard?id=${SONAR_PROJECT_KEY}&pullRequest=${SONAR_PR_KEY}"
+
+        cat > "$RESULT_FILE" <<EOF
+        {
+          "status": "${STATUS}",
+          "quality_gate_status": "${QG_STATUS}",
+          "bugs": ${BUGS:-0},
+          "vulnerabilities": ${VULNS:-0},
+          "code_smells": ${SMELLS:-0},
+          "hotspots": ${HOTSPOTS:-0},
+          "dashboard_url": "${DASHBOARD_URL}"
+        }
+        EOF
+
+        echo "Wrote ${RESULT_FILE}"
+        cat "$RESULT_FILE"

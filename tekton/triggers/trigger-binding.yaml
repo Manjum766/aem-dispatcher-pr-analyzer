@@ -1,0 +1,29 @@
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerBinding
+metadata:
+  name: pr-review-trigger-binding
+  labels:
+    app.kubernetes.io/part-of: pr-review-agent
+spec:
+  params:
+    # Full HTTPS clone URL of the repository
+    - name: REPO_URL
+      value: $(body.repository.clone_url)
+    # SHA of the PR head commit
+    - name: REVISION
+      value: $(body.pull_request.head.sha)
+    # PR number
+    - name: PR_NUMBER
+      value: $(body.pull_request.number)
+    # GitHub owner (org or user)
+    - name: REPO_OWNER
+      value: $(body.repository.owner.login)
+    # Repository name (without owner prefix)
+    - name: REPO_NAME
+      value: $(body.repository.name)
+    # PR head branch name (used for SonarQube branch decoration)
+    - name: SONAR_BRANCH
+      value: $(body.pull_request.head.ref)
+    # Target / base branch of the PR
+    - name: SONAR_PR_BASE
+      value: $(body.pull_request.base.ref)

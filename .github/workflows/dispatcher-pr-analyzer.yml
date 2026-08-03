@@ -9,7 +9,9 @@ permissions:
   pull-requests: write
 
 jobs:
-  analyze:
+  # ── Job 1: Dispatcher rules lint (your existing Python script) ───────────────
+  dispatcher-lint:
+    name: Dispatcher Rules Lint
     runs-on: ubuntu-latest
 
     steps:
@@ -22,10 +24,368 @@ jobs:
           python-version: '3.11'
 
       - name: Run Dispatcher Analyzer
-        run: |
-          python .github/scripts/dispatcher_analyzer.py
+        run: python .github/scripts/dispatcher_analyzer.py
 
-      - name: Comment PR
-        uses: marocchino/sticky-pull-request-comment@v2
+      - name: Upload dispatcher results
+        uses: actions/upload-artifact@v4
+        if: always()
         with:
-          path: dispatcher-report.md
+          name: dispatcher-results
+          path: |
+            dispatcher-result.json
+            dispatcher-report.md
+
+  # ── Job 2: SonarQube SAST scan ───────────────────────────────────────────────
+  sonarqube-scan:
+    name: SonarQube Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Full history required for accurate blame / new-code detection
+          fetch-depth: 0
+
+      - name: SonarQube Scan
+        uses: SonarSource/sonarqube-scan-action@v5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+        with:
+          args: >
+            -Dsonar.pullrequest.key=${{ github.event.pull_request.number }}
+            -Dsonar.pullrequest.branch=${{ github.head_ref }}
+            -Dsonar.pullrequest.base=${{ github.base_ref }}
+
+      - name: SonarQube Quality Gate check
+        id: sonarqube-quality-gate
+        uses: SonarSource/sonarqube-quality-gate-action@v1
+        continue-on-error: true        # report result, don't block pipeline
+        timeout-minutes: 5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+
+      - name: Write SonarQube result JSON
+        if: always()
+        env:
+          QG_STATUS: ${{ steps.sonarqube-quality-gate.outputs.quality-gate-status }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          SONAR_PROJECT_KEY: ${{ vars.SONAR_PROJECT_KEY }}
+        run: |
+          STATUS="passed"
+          if [ "${QG_STATUS}" != "PASSED" ]; then
+            STATUS="failed"
+          fi
+          cat > sonar-result.json <<EOF
+          {
+            "status": "${STATUS}",
+            "quality_gate_status": "${QG_STATUS:-UNKNOWN}",
+            "dashboard_url": "${SONAR_HOST_URL}/dashboard?id=${SONAR_PROJECT_KEY}&pullRequest=${PR_NUMBER}"
+          }
+          EOF
+          echo "Wrote sonar-result.json"
+          cat sonar-result.json
+
+      - name: Upload SonarQube results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sonar-results
+          path: sonar-result.json
+
+  # ── Job 3: Snyk secrets + dependency CVE scan ────────────────────────────────
+  snyk-scan:
+    name: Snyk Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node (required for Snyk CLI)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Snyk CLI
+        run: npm install -g snyk
+
+      - name: Authenticate Snyk
+        run: snyk auth ${{ secrets.SNYK_TOKEN }}
+
+      - name: Snyk code test (secrets + SAST)
+        id: snyk-code
+        continue-on-error: true
+        run: snyk code test --json . > snyk-code-raw.json 2>&1 || true
+
+      - name: Snyk test — Maven (pom.xml)
+        id: snyk-maven
+        continue-on-error: true
+        run: |
+          if [ -f pom.xml ]; then
+            snyk test --file=pom.xml --all-projects --json > snyk-maven-raw.json 2>&1 || true
+          else
+            echo '{"vulnerabilities":[]}' > snyk-maven-raw.json
+          fi
+
+      - name: Snyk test — ui.frontend.widgets (Yarn)
+        id: snyk-widgets
+        continue-on-error: true
+        run: |
+          if [ -f ui.frontend.widgets/package.json ]; then
+            snyk test --file=ui.frontend.widgets/package.json --json > snyk-widgets-raw.json 2>&1 || true
+          else
+            echo '{"vulnerabilities":[]}' > snyk-widgets-raw.json
+          fi
+
+      - name: Snyk test — ui.frontend.idl (npm)
+        id: snyk-idl
+        continue-on-error: true
+        run: |
+          if [ -f ui.frontend.idl/package.json ]; then
+            snyk test --file=ui.frontend.idl/package.json --json > snyk-idl-raw.json 2>&1 || true
+          else
+            echo '{"vulnerabilities":[]}' > snyk-idl-raw.json
+          fi
+
+      - name: Merge Snyk results
+        if: always()
+        run: |
+          python3 - <<'PYEOF'
+          import json, pathlib
+
+          def load(path):
+              try:
+                  text = pathlib.Path(path).read_text()
+                  data = json.loads(text)
+                  # snyk code returns SARIF; snyk test returns {vulnerabilities:[]}
+                  if isinstance(data, list):
+                      return data[0] if data else {}
+                  return data
+              except Exception:
+                  return {}
+
+          code    = load("snyk-code-raw.json")
+          maven   = load("snyk-maven-raw.json")
+          widgets = load("snyk-widgets-raw.json")
+          idl     = load("snyk-idl-raw.json")
+
+          def count_sev(data, sev):
+              vulns = data.get("vulnerabilities", [])
+              # SARIF format has runs[].results[]
+              if not vulns and "runs" in data:
+                  vulns = [r for run in data.get("runs", []) for r in run.get("results", [])]
+              return sum(1 for v in vulns if (v.get("severity") or v.get("level", "")).lower() == sev)
+
+          def get_issues(data, source):
+              vulns = data.get("vulnerabilities", [])
+              if not vulns and "runs" in data:
+                  vulns = [r for run in data.get("runs", []) for r in run.get("results", [])]
+              return [
+                  {
+                      "id":       v.get("id") or v.get("ruleId") or "unknown",
+                      "title":    v.get("title") or (v.get("message") or {}).get("text") or "No title",
+                      "severity": (v.get("severity") or v.get("level") or "unknown").lower(),
+                      "source":   source,
+                  }
+                  for v in vulns[:20]
+              ]
+
+          def secrets_count(data):
+              vulns = data.get("vulnerabilities", [])
+              if not vulns and "runs" in data:
+                  vulns = [r for run in data.get("runs", []) for r in run.get("results", [])]
+              return sum(
+                  1 for v in vulns
+                  if any(kw in str(v).lower() for kw in ("secret", "credential", "token", "password", "key"))
+              )
+
+          critical = sum(count_sev(d, "critical") for d in [maven, widgets, idl])
+          high     = sum(count_sev(d, "high")     for d in [maven, widgets, idl])
+          medium   = sum(count_sev(d, "medium")   for d in [maven, widgets, idl])
+          low      = sum(count_sev(d, "low")      for d in [maven, widgets, idl])
+          secrets  = secrets_count(code)
+
+          issues = (
+              get_issues(code,    "code")
+            + get_issues(maven,   "maven")
+            + get_issues(widgets, "ui.frontend.widgets")
+            + get_issues(idl,     "ui.frontend.idl")
+          )
+
+          status = "failed" if (secrets > 0 or critical > 0 or high > 0) else "passed"
+
+          result = {
+              "status":         status,
+              "secrets_found":  secrets,
+              "critical_vulns": critical,
+              "high_vulns":     high,
+              "medium_vulns":   medium,
+              "low_vulns":      low,
+              "issues":         issues[:20],
+          }
+          pathlib.Path("snyk-result.json").write_text(json.dumps(result, indent=2))
+          print("Wrote snyk-result.json")
+          print(json.dumps(result, indent=2))
+          PYEOF
+
+      - name: Upload Snyk results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: snyk-results
+          path: snyk-result.json
+
+  # ── Job 4: Post consolidated PR comment ─────────────────────────────────────
+  post-comment:
+    name: Post PR Comment
+    runs-on: ubuntu-latest
+    needs: [dispatcher-lint, sonarqube-scan, snyk-scan]
+    if: always()   # run even when upstream jobs fail
+
+    steps:
+      - name: Download dispatcher results
+        uses: actions/download-artifact@v4
+        with:
+          name: dispatcher-results
+        continue-on-error: true
+
+      - name: Download SonarQube results
+        uses: actions/download-artifact@v4
+        with:
+          name: sonar-results
+        continue-on-error: true
+
+      - name: Download Snyk results
+        uses: actions/download-artifact@v4
+        with:
+          name: snyk-results
+        continue-on-error: true
+
+      - name: Build and upsert PR comment
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO:     ${{ github.repository }}
+          PR:       ${{ github.event.pull_request.number }}
+        run: |
+          python3 - <<'PYEOF'
+          import json, os, urllib.request, urllib.error
+
+          MARKER = "<!-- pr-review-agent-marker -->"
+          TOKEN  = os.environ["GH_TOKEN"]
+          REPO   = os.environ["REPO"]
+          PR     = os.environ["PR"]
+          API    = "https://api.github.com"
+
+          HEADERS = {
+              "Authorization": f"token {TOKEN}",
+              "Accept": "application/vnd.github+json",
+              "Content-Type": "application/json",
+              "X-GitHub-Api-Version": "2022-11-28",
+          }
+
+          def gh(method, path, body=None):
+              data = json.dumps(body).encode() if body else None
+              req  = urllib.request.Request(f"{API}{path}", data=data, headers=HEADERS, method=method)
+              try:
+                  with urllib.request.urlopen(req) as r:
+                      return json.loads(r.read())
+              except urllib.error.HTTPError as e:
+                  print(f"GitHub API {method} {path} -> {e.code}: {e.read().decode()}")
+                  return {}
+
+          def load(path):
+              try:
+                  return json.loads(open(path).read())
+              except Exception:
+                  return {"status": "did_not_complete"}
+
+          sonar = load("sonar-result.json")
+          snyk  = load("snyk-result.json")
+          disp  = load("dispatcher-result.json")
+
+          # ── SonarQube row ──────────────────────────────────────────────────
+          sonar_status = sonar.get("status", "did_not_complete")
+          sonar_badge  = {"passed": "✅ Passed", "failed": "❌ Failed"}.get(sonar_status, "⚠️ Scan did not complete")
+          sonar_url    = sonar.get("dashboard_url", "")
+          sonar_link   = f" — [Dashboard]({sonar_url})" if sonar_url else ""
+          sonar_detail = (
+              f"QG: {sonar.get('quality_gate_status', '?')}{sonar_link}"
+          )
+
+          # ── Snyk row ───────────────────────────────────────────────────────
+          snyk_status  = snyk.get("status", "did_not_complete")
+          snyk_badge   = {"passed": "✅ Passed", "failed": "❌ Issues found"}.get(snyk_status, "⚠️ Scan did not complete")
+          snyk_detail  = (
+              f"{snyk.get('critical_vulns','?')} critical, {snyk.get('high_vulns','?')} high CVEs; "
+              f"{snyk.get('secrets_found','?')} secrets found"
+          )
+
+          # ── Dispatcher row ─────────────────────────────────────────────────
+          disp_status  = disp.get("status", "did_not_complete")
+          disp_badge   = {"passed": "✅ Clean", "warnings": "⚠️ Warnings", "failed": "❌ Issues found"}.get(disp_status, "⚠️ Scan did not complete")
+          disp_detail  = (
+              f"{disp.get('total_findings','?')} findings "
+              f"(score: {disp.get('score','?')}/100 {disp.get('level','')})"
+          )
+
+          # ── Snyk findings detail block ─────────────────────────────────────
+          snyk_issues = snyk.get("issues", [])
+          if snyk_issues:
+              snyk_rows = "\n".join(
+                  f"- **[{i['severity'].upper()}]** `{i['id']}` — {i['title']} ({i['source']})"
+                  for i in snyk_issues
+              )
+          else:
+              snyk_rows = "No issues found."
+
+          # ── Dispatcher findings detail block ───────────────────────────────
+          disp_findings = disp.get("findings", [])
+          if disp_findings:
+              disp_rows = "\n".join(
+                  f"- **{f['severity']}** `{f['rule']}` `{f['file']}`:{f['line']} — {f['message'] if 'message' in f else f.get('details','')}"
+                  for f in disp_findings
+              )
+          else:
+              disp_rows = "No issues found."
+
+          body = f"""## 🤖 PR Review Agent
+
+          | Check | Status | Details |
+          |---|---|---|
+          | 🔍 SonarQube | {sonar_badge} | {sonar_detail} |
+          | 🔒 Snyk | {snyk_badge} | {snyk_detail} |
+          | ⚙️ Dispatcher Rules | {disp_badge} | {disp_detail} |
+
+          <details><summary>Snyk Findings</summary>
+
+          {snyk_rows}
+          </details>
+
+          <details><summary>Dispatcher Findings</summary>
+
+          {disp_rows}
+          </details>
+
+          {MARKER}"""
+
+          # Remove Python's multi-line indentation
+          import textwrap
+          body = textwrap.dedent(body).strip()
+
+          # ── Upsert ────────────────────────────────────────────────────────
+          comments = gh("GET", f"/repos/{REPO}/issues/{PR}/comments?per_page=100")
+          existing = next((c for c in (comments if isinstance(comments, list) else []) if MARKER in c.get("body", "")), None)
+
+          if existing:
+              print(f"Updating comment {existing['id']}")
+              gh("PATCH", f"/repos/{REPO}/issues/comments/{existing['id']}", {"body": body})
+          else:
+              print("Creating new comment")
+              gh("POST", f"/repos/{REPO}/issues/{PR}/comments", {"body": body})
+
+          print("Done.")
+          PYEOF

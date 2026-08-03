@@ -1,0 +1,129 @@
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: pr-review-pipeline
+  labels:
+    app.kubernetes.io/part-of: pr-review-agent
+spec:
+  description: >
+    Fan-out / fan-in PR review pipeline.
+    git-clone → [sonarqube-scan ‖ snyk-scan ‖ dispatcher-lint] → post-pr-comment
+
+  params:
+    - name: REPO_URL
+      description: Git clone URL of the repository.
+      type: string
+    - name: REVISION
+      description: Git commit SHA (PR head).
+      type: string
+    - name: PR_NUMBER
+      description: GitHub pull request number.
+      type: string
+    - name: REPO_OWNER
+      description: GitHub organisation or user name.
+      type: string
+    - name: REPO_NAME
+      description: GitHub repository name.
+      type: string
+    - name: SONAR_PROJECT_KEY
+      description: SonarQube project key.
+      type: string
+    - name: SONAR_BRANCH
+      description: Name of the PR head branch.
+      type: string
+      default: ""
+    - name: SONAR_PR_BASE
+      description: Name of the PR target / base branch.
+      type: string
+      default: main
+    - name: SNYK_ORG
+      description: Snyk organisation slug (empty = Snyk default org).
+      type: string
+      default: ""
+
+  workspaces:
+    - name: source
+      description: Cloned repository source.
+    - name: output
+      description: Shared ephemeral volume for scan result JSON files.
+
+  tasks:
+    # ── 1. Clone the PR branch ─────────────────────────────────────────────────
+    - name: git-clone
+      taskRef:
+        name: git-clone
+        kind: ClusterTask
+      params:
+        - name: url
+          value: $(params.REPO_URL)
+        - name: revision
+          value: $(params.REVISION)
+        - name: deleteExisting
+          value: "true"
+      workspaces:
+        - name: output
+          workspace: source
+
+    # ── 2a. SonarQube scan (parallel) ─────────────────────────────────────────
+    - name: sonarqube-scan
+      taskRef:
+        name: sonarqube-scan
+      runAfter:
+        - git-clone
+      params:
+        - name: SONAR_PROJECT_KEY
+          value: $(params.SONAR_PROJECT_KEY)
+        - name: SONAR_BRANCH
+          value: $(params.SONAR_BRANCH)
+        - name: SONAR_PR_KEY
+          value: $(params.PR_NUMBER)
+        - name: SONAR_PR_BASE
+          value: $(params.SONAR_PR_BASE)
+      workspaces:
+        - name: source
+          workspace: source
+        - name: output
+          workspace: output
+
+    # ── 2b. Snyk scan (parallel) ──────────────────────────────────────────────
+    - name: snyk-scan
+      taskRef:
+        name: snyk-scan
+      runAfter:
+        - git-clone
+      params:
+        - name: SNYK_ORG
+          value: $(params.SNYK_ORG)
+      workspaces:
+        - name: source
+          workspace: source
+        - name: output
+          workspace: output
+
+    # ── 2c. Dispatcher lint (parallel) ────────────────────────────────────────
+    - name: dispatcher-lint
+      taskRef:
+        name: dispatcher-lint
+      runAfter:
+        - git-clone
+      workspaces:
+        - name: source
+          workspace: source
+        - name: output
+          workspace: output
+
+  # ── 3. Post PR comment — runs in finally so it always executes ───────────────
+  finally:
+    - name: post-pr-comment
+      taskRef:
+        name: post-pr-comment
+      params:
+        - name: REPO_OWNER
+          value: $(params.REPO_OWNER)
+        - name: REPO_NAME
+          value: $(params.REPO_NAME)
+        - name: PR_NUMBER
+          value: $(params.PR_NUMBER)
+      workspaces:
+        - name: output
+          workspace: output
