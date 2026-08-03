@@ -2,11 +2,19 @@
 {
   /docroot "/var/www/html"
 
+  /statfileslevel "0"
+  /allowAuthorized "1"
+  /serveStaleOnError "1"
+
   /rules
   {
     /0001 { /glob "*" /type "allow" }
-   /0002 { /glob "/content/*" /type "allow" }
-   /0003 { /glob "/bin/*" /type "allow" }
+    /0002 { /glob "/content/*" /type "allow" }
+    /0003 { /glob "/bin/*" /type "allow" }
+    /0004 { /glob "/crx/*" /type "allow" }
+    /0005 { /glob "/system/*" /type "allow" }
+    /0006 { /glob "/libs/*" /type "allow" }
+    /0007 { /glob "/conf/*" /type "allow" }
   }
 
   /ignoreUrlParams
