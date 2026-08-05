@@ -36,16 +36,16 @@ jobs:
             dispatcher-report.md
 
   # ── Job 2: SonarQube SAST scan ───────────────────────────────────────────────
-  sonarqube-scan:
-    name: SonarQube Scan
-    runs-on: ubuntu-latest
+  #sonarqube-scan:
+   # name: SonarQube Scan
+   # runs-on: ubuntu-latest
 
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
+   # steps:
+     # - name: Checkout
+    #    uses: actions/checkout@v4
+     #   with:
           # Full history required for accurate blame / new-code detection
-          fetch-depth: 0
+       #   fetch-depth: 0
 
       - name: SonarQube Scan
         uses: SonarSource/sonarqube-scan-action@v5
