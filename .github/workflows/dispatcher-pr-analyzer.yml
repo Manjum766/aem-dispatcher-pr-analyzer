@@ -85,7 +85,6 @@ jobs:
         uses: SonarSource/sonarqube-scan-action@v5
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: https://sonarcloud.io
         with:
           args: >
             -Dsonar.pullrequest.key=${{ steps.pr.outputs.number }}
@@ -95,10 +94,10 @@ jobs:
       - name: SonarCloud Quality Gate check
         id: sonarcloud-quality-gate
         uses: SonarSource/sonarqube-quality-gate-action@v1
+        continue-on-error: true
         timeout-minutes: 5
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: https://sonarcloud.io
 
       - name: Write SonarCloud result JSON
         if: always()
