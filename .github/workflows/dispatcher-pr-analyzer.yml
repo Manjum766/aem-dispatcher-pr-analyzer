@@ -82,7 +82,13 @@ jobs:
           fi
 
       - name: SonarCloud Scan
+        # sonarqube-scan-action@v5 automatically uploads SARIF to GitHub Advanced Security,
+        # which creates the "Code scanning results / SonarCloud" check independently.
+        # Disable that upload so only our workflow check controls the PR gate.
+        # Also disable the SonarCloud automatic analysis to suppress the third check
+        # ("SonarCloud Code Analysis") posted by the SonarCloud GitHub App.
         uses: SonarSource/sonarqube-scan-action@v5
+        continue-on-error: true
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         with:
@@ -90,31 +96,36 @@ jobs:
             -Dsonar.pullrequest.key=${{ steps.pr.outputs.number }}
             -Dsonar.pullrequest.branch=${{ github.head_ref || github.ref_name }}
             -Dsonar.pullrequest.base=${{ github.base_ref || 'master' }}
-
-      - name: SonarCloud Quality Gate check
-        id: sonarcloud-quality-gate
-        uses: SonarSource/sonarqube-quality-gate-action@v1
-        continue-on-error: true
-        timeout-minutes: 5
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+            -Dsonar.scm.disabled=false
+            -Dsonar.sarifReportPaths=
 
       - name: Write SonarCloud result JSON
+        # Read the Quality Gate status directly from the SonarCloud API rather than
+        # using sonarqube-quality-gate-action, which posts its own failing GitHub check.
         if: always()
         env:
-          QG_STATUS: ${{ steps.sonarcloud-quality-gate.outputs.quality-gate-status }}
-          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          SONAR_TOKEN:       ${{ secrets.SONAR_TOKEN }}
+          PR_NUMBER:         ${{ steps.pr.outputs.number }}
           SONAR_PROJECT_KEY: ${{ vars.SONAR_PROJECT_KEY }}
         run: |
+          # Poll Quality Gate status directly — no action that can post a check
+          QG_STATUS=$(curl -sf \
+            -u "${SONAR_TOKEN}:" \
+            "https://sonarcloud.io/api/qualitygates/project_status?projectKey=${SONAR_PROJECT_KEY}&pullRequest=${PR_NUMBER}" \
+            | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['projectStatus']['status'])" \
+            2>/dev/null || echo "UNKNOWN")
+
           STATUS="passed"
-          if [ "${QG_STATUS}" != "PASSED" ]; then STATUS="failed"; fi
+          if [ "${QG_STATUS}" != "OK" ]; then STATUS="failed"; fi
+
           cat > sonar-result.json <<EOF
           {
             "status": "${STATUS}",
-            "quality_gate_status": "${QG_STATUS:-UNKNOWN}",
+            "quality_gate_status": "${QG_STATUS}",
             "dashboard_url": "https://sonarcloud.io/dashboard?id=${SONAR_PROJECT_KEY}&pullRequest=${PR_NUMBER}"
           }
           EOF
+          echo "Quality Gate: ${QG_STATUS} -> ${STATUS}"
           cat sonar-result.json
 
       - name: Upload SonarCloud results
