@@ -8,6 +8,11 @@ on:
 permissions:
   contents: read
 
+# ── Concurrency: cancel in-flight run on same PR when a new push arrives ──────
+concurrency:
+  group: pr-analyzer-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   # ── Job 1: Dispatcher rules lint ─────────────────────────────────────────────
   dispatcher-lint:
@@ -15,6 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read        # checkout only
+      statuses: write       # post explicit commit status so branch protection sees it
 
     steps:
       - name: Checkout
@@ -118,6 +124,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read        # checkout only
+      statuses: write       # post explicit commit status so branch protection sees it
 
     steps:
       - name: Checkout
