@@ -36,16 +36,16 @@ jobs:
             dispatcher-report.md
 
   # ── Job 2: SonarQube SAST scan ───────────────────────────────────────────────
-  #sonarqube-scan:
-   # name: SonarQube Scan
-   # runs-on: ubuntu-latest
+  sonarqube-scan:
+    name: SonarQube Scan
+    runs-on: ubuntu-latest
 
-   # steps:
-     # - name: Checkout
-    #    uses: actions/checkout@v4
-     #   with:
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
           # Full history required for accurate blame / new-code detection
-       #   fetch-depth: 0
+          fetch-depth: 0
 
       - name: SonarQube Scan
         uses: SonarSource/sonarqube-scan-action@v5
@@ -61,7 +61,6 @@ jobs:
       - name: SonarQube Quality Gate check
         id: sonarqube-quality-gate
         uses: SonarSource/sonarqube-quality-gate-action@v1
-        continue-on-error: true        # report result, don't block pipeline
         timeout-minutes: 5
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
@@ -125,8 +124,8 @@ jobs:
         id: snyk-maven
         continue-on-error: true
         run: |
-          if [ -f pom.xml ]; then
-            snyk test --file=pom.xml --all-projects --json > snyk-maven-raw.json 2>&1 || true
+          if [ -f java-demo/pom.xml ]; then
+            snyk test --file=java-demo/pom.xml --all-projects --json > snyk-maven-raw.json 2>&1 || true
           else
             echo '{"vulnerabilities":[]}' > snyk-maven-raw.json
           fi
