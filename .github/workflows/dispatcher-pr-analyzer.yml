@@ -4,16 +4,17 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
 
+# Least-privilege default — each job gets only what it needs.
 permissions:
   contents: read
-  pull-requests: write
-  statuses: write      # required so jobs can set commit status (blocks merge button)
 
 jobs:
   # ── Job 1: Dispatcher rules lint ─────────────────────────────────────────────
   dispatcher-lint:
     name: Dispatcher Rules Lint
     runs-on: ubuntu-latest
+    permissions:
+      contents: read        # checkout only
 
     steps:
       - name: Checkout
@@ -35,11 +36,16 @@ jobs:
           path: |
             dispatcher-result.json
             dispatcher-report.md
+        # The analyzer script itself exits non-zero on CRITICAL/HIGH findings,
+        # so no separate fail step is needed here.
 
   # ── Job 2: SonarCloud SAST scan ──────────────────────────────────────────────
   sonarcloud-scan:
     name: SonarCloud Scan
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      statuses: write       # allows the quality-gate action to post a commit status
 
     steps:
       - name: Checkout
@@ -110,6 +116,8 @@ jobs:
   snyk-scan:
     name: Snyk Scan
     runs-on: ubuntu-latest
+    permissions:
+      contents: read        # checkout only
 
     steps:
       - name: Checkout
@@ -259,6 +267,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: [dispatcher-lint, sonarcloud-scan, snyk-scan]
     if: always()   # run even when upstream jobs fail
+    permissions:
+      pull-requests: write  # upsert the PR comment
 
     steps:
       - name: Download dispatcher results
