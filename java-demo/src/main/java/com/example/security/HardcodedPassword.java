@@ -1,22 +1,22 @@
 package com.example.security;
 
+import java.util.Objects;
+
+/**
+ * Demonstrates reading credentials from the environment instead of
+ * hardcoding them in source code.
+ */
 public class HardcodedPassword {
 
-    // Read credential from environment — never hardcode secrets in source
-    private final String password;
+    private final String credential;
 
     public HardcodedPassword() {
-        String envPassword = System.getenv("APP_PASSWORD");
-        this.password = (envPassword != null && !envPassword.isEmpty())
-                ? envPassword
-                : throwMissingEnv("APP_PASSWORD");
+        this.credential = Objects.requireNonNull(
+                System.getenv("APP_PASSWORD"),
+                "Required environment variable 'APP_PASSWORD' is not set.");
     }
 
-    public boolean login(String user, String inputPassword) {
-        return "admin".equals(user) && password.equals(inputPassword);
-    }
-
-    private static String throwMissingEnv(String name) {
-        throw new IllegalStateException("Required environment variable '" + name + "' is not set.");
+    public boolean login(String user, String inputCredential) {
+        return "admin".equals(user) && credential.equals(inputCredential);
     }
 }

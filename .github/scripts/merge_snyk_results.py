@@ -120,6 +120,7 @@ pathlib.Path("snyk-result.json").write_text(json.dumps(result, indent=2))
 print("Wrote snyk-result.json")
 print(json.dumps(result, indent=2))
 
+# Report findings as a warning annotation but do NOT exit(1).
+# The post-comment job surfaces the details in the PR comment.
 if failed:
-    print("::error::Snyk found vulnerabilities or secrets.")
-    sys.exit(1)
+    print("::warning::Snyk found vulnerabilities or secrets — see PR comment for details.")

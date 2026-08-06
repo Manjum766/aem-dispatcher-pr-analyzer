@@ -61,10 +61,9 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Build with Maven (compile only)
+      - name: Build with Maven (compile + resolve deps for Sonar bytecode analysis)
         working-directory: java-demo
-        run: mvn -B compile --no-transfer-progress
-        continue-on-error: true
+        run: mvn -B compile dependency:resolve --no-transfer-progress
 
       - name: Resolve PR number
         id: pr
@@ -142,6 +141,16 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+
+      - name: Set up JDK 17 (Maven needed for Snyk dep resolution)
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Resolve Maven dependencies (required by Snyk)
+        working-directory: java-demo
+        run: mvn -B dependency:resolve --no-transfer-progress -q
 
       - name: Install Snyk CLI
         run: npm install -g snyk
