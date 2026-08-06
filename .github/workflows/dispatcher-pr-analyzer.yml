@@ -351,7 +351,7 @@ jobs:
           PR:       ${{ github.event.pull_request.number }}
         run: |
           python3 - <<'PYEOF'
-          import json, os, urllib.request, urllib.error
+          import json, os, re, textwrap, urllib.request, urllib.error
 
           MARKER = "<!-- pr-review-agent-marker -->"
           TOKEN  = os.environ["GH_TOKEN"]
@@ -386,14 +386,383 @@ jobs:
           snyk  = load("snyk-result.json")
           disp  = load("dispatcher-result.json")
 
-          # ── SonarCloud row ────────────────────────────────────────────────
+          # ════════════════════════════════════════════════════════════════════
+          # AI AGENT FIX RECOMMENDATION DATABASES
+          # ════════════════════════════════════════════════════════════════════
+
+          # ── Snyk SAST fix DB (keyed on ruleId substring, case-insensitive) ─
+          # Each entry: (one-line summary, code fix block)
+          SNYK_SAST_FIX = {
+              "hardcodedpassword": (
+                  "Remove the hardcoded credential. Read it from environment variables or a secrets manager.",
+                  """\
+```java
+// ❌ Before
+private static final String PASSWORD = "admin123";
+
+// ✅ After — read from environment / secrets manager
+private static final String PASSWORD = System.getenv("APP_PASSWORD");
+// Or with a framework: @Value("${app.password}") private String password;
+```""",
+              ),
+              "hardcredsecret": (
+                  "Remove the hardcoded credential. Read it from environment variables or a secrets manager.",
+                  """\
+```java
+// ✅ After — read from environment / secrets manager
+private static final String SECRET = System.getenv("APP_SECRET");
+```""",
+              ),
+              "sqli": (
+                  "Use PreparedStatement with parameter binding — never concatenate user input into SQL.",
+                  """\
+```java
+// ❌ Before
+String query = "SELECT * FROM users WHERE username='" + username + "'";
+stmt.executeQuery(query);
+
+// ✅ After
+PreparedStatement ps = connection.prepareStatement(
+    "SELECT * FROM users WHERE username = ?");
+ps.setString(1, username);
+ResultSet rs = ps.executeQuery();
+```""",
+              ),
+              "sqlinjection": (
+                  "Use PreparedStatement with parameter binding — never concatenate user input into SQL.",
+                  """\
+```java
+// ❌ Before
+String query = "SELECT * FROM users WHERE username='" + username + "'";
+
+// ✅ After
+PreparedStatement ps = connection.prepareStatement(
+    "SELECT * FROM users WHERE username = ?");
+ps.setString(1, username);
+```""",
+              ),
+              "weakrandom": (
+                  "Replace java.util.Random with java.security.SecureRandom for any security-sensitive value.",
+                  """\
+```java
+// ❌ Before
+Random random = new Random();
+int otp = 100000 + random.nextInt(900000);
+
+// ✅ After
+SecureRandom secureRandom = new SecureRandom();
+int otp = 100000 + secureRandom.nextInt(900000);
+```""",
+              ),
+              "insecurerandom": (
+                  "Replace java.util.Random with java.security.SecureRandom for security-sensitive values.",
+                  """\
+```java
+// ✅ After
+import java.security.SecureRandom;
+SecureRandom sr = new SecureRandom();
+```""",
+              ),
+              "nullpointer": (
+                  "Add a null-check or use Objects.requireNonNull() before dereferencing the parameter.",
+                  """\
+```java
+// ❌ Before
+public int getLength(String value) {
+    return value.length(); // NPE if value is null
+}
+
+// ✅ After
+public int getLength(String value) {
+    if (value == null) return 0;
+    return value.length();
+}
+// Or with Optional:
+// return Optional.ofNullable(value).map(String::length).orElse(0);
+```""",
+              ),
+              "xss": (
+                  "Encode all user-controlled output before writing to HTML. Use a library like OWASP Java Encoder.",
+                  """\
+```java
+// ✅ After — using OWASP Java Encoder
+import org.owasp.encoder.Encode;
+String safe = Encode.forHtml(userInput);
+```""",
+              ),
+              "pathtraversal": (
+                  "Canonicalize and validate file paths to prevent directory traversal attacks.",
+                  """\
+```java
+// ✅ After
+Path base    = Paths.get("/allowed/base").toRealPath();
+Path target  = base.resolve(userInput).normalize();
+if (!target.startsWith(base)) {
+    throw new SecurityException("Path traversal attempt blocked");
+}
+```""",
+              ),
+              "deserializ": (
+                  "Avoid Java native deserialization of untrusted data. Use a safe format (JSON/Protobuf) or an object filter.",
+                  """\
+```java
+// ✅ After — use ObjectInputFilter (Java 9+)
+ObjectInputStream ois = new ObjectInputStream(inputStream);
+ois.setObjectInputFilter(ObjectInputFilter.Config.createFilter(
+    "com.example.SafeClass;!*"));
+```""",
+              ),
+          }
+
+          # Generic fix advice for Snyk SAST rules not matched above
+          SNYK_SAST_GENERIC = (
+              "Review the flagged code and apply the principle of least privilege / input validation.",
+              "> Refer to the [Snyk vulnerability database](https://security.snyk.io) for rule-specific remediation guidance.",
+          )
+
+          # ── Snyk dependency CVE fix DB (keyed on package name substring) ──
+          # Each entry: (upgrade instruction, notes)
+          SNYK_DEP_FIX = {
+              "jackson-databind": (
+                  "Upgrade `jackson-databind` to **2.15.4** or later (2.14.x minimum for Java 11).",
+                  """\
+```xml
+<!-- ✅ pom.xml -->
+<dependency>
+  <groupId>com.fasterxml.jackson.core</groupId>
+  <artifactId>jackson-databind</artifactId>
+  <version>2.15.4</version>
+</dependency>
+```""",
+              ),
+              "commons-collections": (
+                  "Upgrade `commons-collections4` to **4.4** or later.",
+                  """\
+```xml
+<!-- ✅ pom.xml -->
+<dependency>
+  <groupId>org.apache.commons</groupId>
+  <artifactId>commons-collections4</artifactId>
+  <version>4.4</version>
+</dependency>
+```""",
+              ),
+              "spring-web": (
+                  "Upgrade `spring-web` to **5.3.39** or later (or **6.x** for Java 17+).",
+                  """\
+```xml
+<!-- ✅ pom.xml -->
+<dependency>
+  <groupId>org.springframework</groupId>
+  <artifactId>spring-web</artifactId>
+  <version>5.3.39</version>
+</dependency>
+```""",
+              ),
+              "spring-webmvc": (
+                  "Upgrade `spring-webmvc` to **5.3.39** or later.",
+                  """\
+```xml
+<!-- ✅ pom.xml -->
+<dependency>
+  <groupId>org.springframework</groupId>
+  <artifactId>spring-webmvc</artifactId>
+  <version>5.3.39</version>
+</dependency>
+```""",
+              ),
+          }
+
+          SNYK_DEP_GENERIC = (
+              "Upgrade the dependency to the latest stable version that resolves the CVE.",
+              "> Check [Snyk Advisor](https://snyk.io/advisor) or [MVN Repository](https://mvnrepository.com) for the recommended safe version.",
+          )
+
+          # ── Dispatcher rule fix DB (keyed on DISP-XXX rule code) ──────────
+          DISP_FIX = {
+              "DISP-001": (
+                  'Remove the `/glob "*" /type "allow"` catch-all and replace with explicit allow rules.',
+                  """\
+```apache
+# ❌ Before
+/0001 { /glob "*" /type "allow" }
+
+# ✅ After — deny everything first, then allow only what is needed
+/0001 { /glob "*"          /type "deny"  }
+/0002 { /glob "/content/*" /type "allow" }
+/0003 { /glob "/etc/designs/*" /type "allow" }
+/0004 { /glob "/clientlibs/*"  /type "allow" }
+```""",
+              ),
+              "DISP-002": (
+                  'Make the very first `/type` rule in the filter file a `/type "deny"` to enforce an allow-list.',
+                  """\
+```apache
+# ✅ Add as rule /0001 (before any allow rules)
+/0001 { /type "deny" /url "*" }
+```""",
+              ),
+              "DISP-003": (
+                  'Remove any rule that allows `/crx/*` or `/system/*`. These paths must never be reachable via the dispatcher.',
+                  """\
+```apache
+# ❌ Remove these rules entirely
+# /0010 { /glob "/crx/*"    /type "allow" }
+# /0011 { /glob "/system/*" /type "allow" }
+
+# ✅ Explicitly deny them (belt-and-suspenders)
+/0010 { /glob "/crx/*"    /type "deny" }
+/0011 { /glob "/system/*" /type "deny" }
+```""",
+              ),
+              "DISP-004": (
+                  'Add a specific deny rule for sensitive `/bin/` servlets after the broad allow, or remove the allow entirely.',
+                  """\
+```apache
+# If you must allow specific bin servlets, be explicit:
+/0020 { /glob "/bin/public/*" /type "allow" }
+
+# ✅ Then deny everything else under /bin
+/0021 { /glob "/bin/*"        /type "deny"  }
+```""",
+              ),
+              "DISP-005": (
+                  'The cache rules must deny sensitive paths. Add explicit deny overrides after the allow-all.',
+                  """\
+```apache
+# ✅ cache.any — deny admin paths before the catch-all allow
+/rules {
+  /0001 { /glob "/crx/*"    /type "deny" }
+  /0002 { /glob "/system/*" /type "deny" }
+  /0003 { /glob "/bin/*"    /type "deny" }
+  /0004 { /glob "/libs/*"   /type "deny" }
+  /0005 { /glob "/conf/*"   /type "deny" }
+  /0006 { /glob "*"         /type "allow" }
+}
+```""",
+              ),
+              "DISP-005b": (
+                  "Explicitly ignore known tracking/analytics query parameters so they do not fragment the cache.",
+                  """\
+```apache
+# ✅ ignoreUrlParams — list params that should NOT affect the cache key
+/ignoreUrlParams {
+  /0001 { /glob "utm_*"   /type "allow" }
+  /0002 { /glob "gclid"   /type "allow" }
+  /0003 { /glob "fbclid"  /type "allow" }
+  /0004 { /glob "_ga"     /type "allow" }
+  # Everything else DOES affect the cache key (deny = include in key)
+  /0005 { /glob "*"       /type "deny"  }
+}
+```""",
+              ),
+              "DISP-006": (
+                  "Add a `Content-Security-Policy` response header to the VHost file.",
+                  """\
+```apache
+# ✅ Add inside <VirtualHost> block
+Header always set Content-Security-Policy \\
+  "default-src 'self'; script-src 'self' 'nonce-{NONCE}'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none';"
+```""",
+              ),
+              "DISP-007": (
+                  "Add an `X-Frame-Options` response header to prevent clickjacking.",
+                  """\
+```apache
+# ✅ Add inside <VirtualHost> block
+Header always set X-Frame-Options "SAMEORIGIN"
+```""",
+              ),
+              "DISP-008": (
+                  'Set `/allowAuthorized "0"` (the default) to prevent caching of authenticated responses.',
+                  """\
+```apache
+# ❌ Before
+/allowAuthorized "1"
+
+# ✅ After
+/allowAuthorized "0"
+# Or remove the line entirely — "0" is the default.
+```""",
+              ),
+              "DISP-009": (
+                  "Remove the rule that caches this sensitive AEM path. It must never be cached or publicly accessible.",
+                  """\
+```apache
+# ❌ Remove these lines from /rules { }
+# /0004 { /glob "/crx/*"    /type "allow" }
+# /0005 { /glob "/system/*" /type "allow" }
+
+# ✅ Replace with explicit deny (belt-and-suspenders)
+/0004 { /glob "/crx/*"    /type "deny" }
+/0005 { /glob "/system/*" /type "deny" }
+```""",
+              ),
+              "DISP-010": (
+                  "Remove `/libs/*` and `/conf/*` from cache allow rules — these are AEM internal paths.",
+                  """\
+```apache
+# ❌ Remove
+# /0006 { /glob "/libs/*" /type "allow" }
+# /0007 { /glob "/conf/*" /type "allow" }
+
+# ✅ Add explicit deny
+/0006 { /glob "/libs/*" /type "deny" }
+/0007 { /glob "/conf/*" /type "deny" }
+```""",
+              ),
+              "DISP-GQL": (
+                  "Restrict the GraphQL endpoint to persisted queries only and ensure it is not publicly cacheable.",
+                  """\
+```apache
+# ✅ In your VHost — block ad-hoc GraphQL queries (POST with query= param)
+<LocationMatch "/_cq_graphql">
+  # Only allow GET requests (persisted queries)
+  <LimitExcept GET>
+    Require all denied
+  </LimitExcept>
+</LocationMatch>
+```""",
+              ),
+          }
+
+          # ════════════════════════════════════════════════════════════════════
+          # LOOKUP HELPERS
+          # ════════════════════════════════════════════════════════════════════
+
+          def snyk_sast_fix(rule_id):
+              rid = (rule_id or "").lower()
+              for key, val in SNYK_SAST_FIX.items():
+                  if key in rid:
+                      return val
+              return SNYK_SAST_GENERIC
+
+          def snyk_dep_fix(location):
+              loc = (location or "").lower()
+              for key, val in SNYK_DEP_FIX.items():
+                  if key in loc:
+                      return val
+              return SNYK_DEP_GENERIC
+
+          def disp_fix(rule):
+              return DISP_FIX.get(rule, (
+                  "Review the dispatcher configuration and apply the principle of least privilege.",
+                  "> Consult the [AEM Dispatcher Security Checklist](https://experienceleague.adobe.com/docs/experience-manager-dispatcher/using/getting-started/security-checklist.html) for remediation guidance.",
+              ))
+
+          # ════════════════════════════════════════════════════════════════════
+          # SUMMARY TABLE ROWS
+          # ════════════════════════════════════════════════════════════════════
+
+          SEV_ICON  = {"high": "🔴", "critical": "🔴", "medium": "🟠", "low": "🟡"}
+          DISP_ICON = {"CRITICAL": "🔴", "HIGH": "🟠", "MEDIUM": "🟡", "LOW": "🔵"}
+
           sonar_status = sonar.get("status", "did_not_complete")
           sonar_badge  = {"passed": "✅ Passed", "failed": "❌ Failed"}.get(sonar_status, "⚠️ Scan did not complete")
           sonar_url    = sonar.get("dashboard_url", "")
           sonar_link   = f" — [Dashboard]({sonar_url})" if sonar_url else ""
           sonar_detail = f"QG: {sonar.get('quality_gate_status', '?')}{sonar_link}"
 
-          # ── Snyk row ──────────────────────────────────────────────────────
           snyk_status  = snyk.get("status", "did_not_complete")
           snyk_badge   = {"passed": "✅ Passed", "failed": "❌ Issues found"}.get(snyk_status, "⚠️ Scan did not complete")
           snyk_detail  = (
@@ -402,7 +771,6 @@ jobs:
               f"Secrets: {snyk.get('secrets_found','?')}"
           )
 
-          # ── Dispatcher row ────────────────────────────────────────────────
           disp_status  = disp.get("status", "did_not_complete")
           disp_badge   = {"passed": "✅ Clean", "warnings": "⚠️ Warnings", "failed": "❌ Issues found"}.get(disp_status, "⚠️ Scan did not complete")
           disp_detail  = (
@@ -411,41 +779,130 @@ jobs:
               f"score: {disp.get('score','?')}/100"
           )
 
-          # ── Snyk findings detail block ────────────────────────────────────
-          snyk_issues = snyk.get("issues", [])
-          SEV_ICON = {"high": "🔴", "critical": "🔴", "medium": "🟠", "low": "🟡"}
-          if snyk_issues:
-              sast  = [i for i in snyk_issues if i.get("source") == "java-sast"]
-              deps  = [i for i in snyk_issues if i.get("source") != "java-sast"]
-              parts = []
-              if sast:
-                  parts.append("**SAST findings (Java source code)**")
-                  for i in sast:
-                      loc = f" `{i['location']}`" if i.get("location") else ""
-                      parts.append(f"- {SEV_ICON.get(i['severity'],'⚪')} **[{i['severity'].upper()}]** `{i['id']}` —{loc} {i['title']}")
-              if deps:
-                  parts.append("\n**Dependency CVEs**")
-                  for i in deps:
-                      loc = f" `{i['location']}`" if i.get("location") else ""
-                      parts.append(f"- {SEV_ICON.get(i['severity'],'⚪')} **[{i['severity'].upper()}]** `{i['id']}` —{loc} {i['title']} ({i['source']})")
-              snyk_rows = "\n".join(parts)
-          else:
-              snyk_rows = "No issues found."
+          # ════════════════════════════════════════════════════════════════════
+          # AI AGENT SUMMARY BLOCK
+          # ════════════════════════════════════════════════════════════════════
 
-          # ── Dispatcher findings detail block ──────────────────────────────
-          disp_findings = disp.get("findings", [])
-          DISP_ICON = {"CRITICAL": "🔴", "HIGH": "🟠", "MEDIUM": "🟡", "LOW": "🔵"}
-          if disp_findings:
-              disp_rows = "\n".join(
-                  f"- {DISP_ICON.get(f['severity'],'⚪')} **[{f['severity']}]** `{f['rule']}` "
-                  f"`{f['file']}`:{f['line']} — **{f['title']}**  \n"
-                  f"  {f.get('details','')}"
-                  for f in disp_findings
+          any_failed = any(s == "failed" for s in [sonar_status, snyk_status, disp_status])
+          if any_failed:
+              action_items = []
+              if disp_status == "failed":
+                  action_items.append(
+                      f"- **Dispatcher** — fix {disp.get('critical',0)} critical and "
+                      f"{disp.get('high',0)} high rule violations in your `.any` / `.vhost` files "
+                      f"before this can be merged (see findings below)"
+                  )
+              if snyk_status == "failed":
+                  if snyk.get("secrets_found", 0) > 0:
+                      action_items.append(
+                          "- **Secrets** — remove hardcoded credentials from source code immediately; "
+                          "rotate any exposed values and store them in environment variables or a secrets manager"
+                      )
+                  if (snyk.get("sast_high", 0) or 0) > 0:
+                      action_items.append(
+                          f"- **SAST** — {snyk.get('sast_high',0)} high-severity code issues detected "
+                          f"(SQL injection, weak crypto, etc.) — see fix recommendations below"
+                      )
+                  if (snyk.get("critical_vulns", 0) or 0) + (snyk.get("high_vulns", 0) or 0) > 0:
+                      action_items.append(
+                          f"- **Dependencies** — {snyk.get('critical_vulns',0)} critical and "
+                          f"{snyk.get('high_vulns',0)} high CVEs in Maven dependencies — upgrade to patched versions (see below)"
+                      )
+              if sonar_status == "failed":
+                  action_items.append(
+                      "- **SonarCloud** — Quality Gate failed; open the dashboard link above, "
+                      "resolve all new bugs / vulnerabilities / hotspots on this branch"
+                  )
+              agent_summary = (
+                  "> [!CAUTION]\n"
+                  "> **🤖 AI Agent — Action Required before merge:**\n>\n"
+                  + "\n".join(f"> {a}" for a in action_items)
               )
           else:
-              disp_rows = "No issues found."
+              agent_summary = (
+                  "> [!NOTE]\n"
+                  "> **🤖 AI Agent** — All scans passed. This PR is clear to merge from a security standpoint."
+              )
+
+          # ════════════════════════════════════════════════════════════════════
+          # SNYK FINDINGS BLOCK  (finding + fix recommendation per item)
+          # ════════════════════════════════════════════════════════════════════
+
+          snyk_issues = snyk.get("issues", [])
+          if snyk_issues:
+              sast = [i for i in snyk_issues if i.get("source") == "java-sast"]
+              deps = [i for i in snyk_issues if i.get("source") != "java-sast"]
+              parts = []
+
+              if sast:
+                  parts.append("### SAST findings (Java source code)\n")
+                  for i in sast:
+                      loc         = f" `{i['location']}`" if i.get("location") else ""
+                      fix_summary, fix_code = snyk_sast_fix(i.get("id", ""))
+                      parts.append(
+                          f"{SEV_ICON.get(i['severity'],'⚪')} **[{i['severity'].upper()}]** "
+                          f"`{i['id']}` —{loc} {i['title']}\n\n"
+                          f"> 💡 **Fix:** {fix_summary}\n\n"
+                          f"{fix_code}\n"
+                      )
+
+              if deps:
+                  parts.append("### Dependency CVEs\n")
+                  seen_pkg = set()
+                  for i in deps:
+                      pkg  = i.get("location", "")
+                      loc  = f" `{pkg}`" if pkg else ""
+                      # de-duplicate fix advice per package (many CVEs per package)
+                      pkg_key = pkg.split("@")[0] if pkg else i.get("id","")
+                      fix_summary, fix_code = snyk_dep_fix(pkg)
+                      parts.append(
+                          f"{SEV_ICON.get(i['severity'],'⚪')} **[{i['severity'].upper()}]** "
+                          f"`{i['id']}` —{loc} {i['title']}\n"
+                      )
+                      if pkg_key not in seen_pkg:
+                          seen_pkg.add(pkg_key)
+                          parts.append(
+                              f"> 💡 **Fix:** {fix_summary}\n\n"
+                              f"{fix_code}\n"
+                          )
+
+              snyk_rows = "\n".join(parts)
+          else:
+              snyk_rows = "✅ No issues found."
+
+          # ════════════════════════════════════════════════════════════════════
+          # DISPATCHER FINDINGS BLOCK  (finding + fix recommendation per rule)
+          # ════════════════════════════════════════════════════════════════════
+
+          disp_findings = disp.get("findings", [])
+          if disp_findings:
+              disp_parts = []
+              seen_rules = set()
+              for f in disp_findings:
+                  rule        = f.get("rule", "")
+                  loc         = f":{f['line']}" if f.get("line") else ""
+                  fix_summary, fix_code = disp_fix(rule)
+                  disp_parts.append(
+                      f"{DISP_ICON.get(f['severity'],'⚪')} **[{f['severity']}]** "
+                      f"`{rule}` `{f['file']}`{loc} — **{f['title']}**\n\n"
+                      f"> ℹ️ {f.get('details','')}\n\n"
+                      f"> 💡 **Fix:** {fix_summary}\n\n"
+                      + (fix_code if rule not in seen_rules else
+                         "> *(fix snippet shown above for this rule)*")
+                      + "\n"
+                  )
+                  seen_rules.add(rule)
+              disp_rows = "\n---\n".join(disp_parts)
+          else:
+              disp_rows = "✅ No issues found."
+
+          # ════════════════════════════════════════════════════════════════════
+          # ASSEMBLE COMMENT BODY
+          # ════════════════════════════════════════════════════════════════════
 
           body = f"""## 🤖 PR Review Agent
+
+          {agent_summary}
 
           | Check | Status | Details |
           |---|---|---|
@@ -453,19 +910,18 @@ jobs:
           | 🔒 Snyk | {snyk_badge} | {snyk_detail} |
           | ⚙️ Dispatcher Rules | {disp_badge} | {disp_detail} |
 
-          <details><summary>🔒 Snyk Findings</summary>
+          <details><summary>🔒 Snyk Findings &amp; Fix Recommendations</summary>
 
           {snyk_rows}
           </details>
 
-          <details><summary>⚙️ Dispatcher Findings</summary>
+          <details><summary>⚙️ Dispatcher Findings &amp; Fix Recommendations</summary>
 
           {disp_rows}
           </details>
 
           {MARKER}"""
 
-          import textwrap
           body = textwrap.dedent(body).strip()
 
           comments = gh("GET", f"/repos/{REPO}/issues/{PR}/comments?per_page=100")
