@@ -196,17 +196,24 @@ def check_cache_file(path: Path):
                 path, no,
             )
 
-    # DISP-005b — all URL params cached
-    if "/ignoreUrlParams" in text and '/glob "*"' in text:
-        lineno = first_lineno(path, "/ignoreUrlParams")
-        add(
-            "MEDIUM", "DISP-005b",
-            "All query parameters used as cache keys",
-            "The `ignoreUrlParams` block contains `/glob \"*\" /type \"allow\"`, meaning every "
-            "query parameter is included in the cache key. UTM/tracking params will fragment "
-            "the cache and reduce hit rate. Explicitly ignore known tracking params.",
-            path, lineno,
-        )
+    # DISP-005b — all URL params used as cache keys
+    # Only fire when /glob "*" /type "allow" appears inside the ignoreUrlParams block.
+    if "/ignoreUrlParams" in text:
+        # Extract just the ignoreUrlParams block content
+        block_start = text.find("/ignoreUrlParams")
+        brace_open  = text.find("{", block_start)
+        brace_close = text.find("}", brace_open)
+        block_text  = text[brace_open:brace_close] if brace_open != -1 and brace_close != -1 else ""
+        if '/glob "*"' in block_text and '/type "allow"' in block_text:
+            lineno = first_lineno(path, "/ignoreUrlParams")
+            add(
+                "MEDIUM", "DISP-005b",
+                "All query parameters used as cache keys",
+                "The `ignoreUrlParams` block contains `/glob \"*\" /type \"allow\"`, meaning every "
+                "query parameter is included in the cache key. UTM/tracking params will fragment "
+                "the cache and reduce hit rate. Explicitly ignore known tracking params.",
+                path, lineno,
+            )
 
 
 def check_vhost_file(path: Path):
