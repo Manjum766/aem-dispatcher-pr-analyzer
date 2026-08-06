@@ -1,6 +1,11 @@
 name: AEM Dispatcher PR Analyzer
 
 on:
+  # Runs on every push to a non-master branch (covers dev fixing issues on same PR branch)
+  push:
+    branches-ignore:
+      - master
+  # Also runs on PR lifecycle events (opened, new commits, reopened)
   pull_request:
     types: [opened, synchronize, reopened]
 
@@ -8,9 +13,10 @@ on:
 permissions:
   contents: read
 
-# ── Concurrency: cancel in-flight run on same PR when a new push arrives ──────
+# ── Concurrency: one run at a time per branch, cancel the stale one ───────────
+# Works for both push and pull_request events.
 concurrency:
-  group: pr-analyzer-${{ github.event.pull_request.number }}
+  group: pr-analyzer-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
@@ -70,6 +76,24 @@ jobs:
         working-directory: java-demo
         run: mvn -B compile --no-transfer-progress
 
+      - name: Resolve PR number
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO:     ${{ github.repository }}
+          SHA:      ${{ github.sha }}
+          PR_NUM:   ${{ github.event.pull_request.number }}
+        run: |
+          if [ -n "$PR_NUM" ]; then
+            echo "number=$PR_NUM" >> "$GITHUB_OUTPUT"
+          else
+            # push event — look up the open PR for this SHA/branch via API
+            NUM=$(curl -s -H "Authorization: token $GH_TOKEN" \
+              "https://api.github.com/repos/$REPO/pulls?state=open&head=$(echo $REPO | cut -d/ -f1):$(git rev-parse --abbrev-ref HEAD)&per_page=5" \
+              | python3 -c "import json,sys; prs=json.load(sys.stdin); print(prs[0]['number'] if prs else '')" 2>/dev/null)
+            echo "number=${NUM}" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: SonarCloud Scan
         uses: SonarSource/sonarqube-scan-action@v5
         env:
@@ -77,9 +101,9 @@ jobs:
           SONAR_HOST_URL: https://sonarcloud.io
         with:
           args: >
-            -Dsonar.pullrequest.key=${{ github.event.pull_request.number }}
-            -Dsonar.pullrequest.branch=${{ github.head_ref }}
-            -Dsonar.pullrequest.base=${{ github.base_ref }}
+            -Dsonar.pullrequest.key=${{ steps.pr.outputs.number }}
+            -Dsonar.pullrequest.branch=${{ github.head_ref || github.ref_name }}
+            -Dsonar.pullrequest.base=${{ github.base_ref || 'master' }}
 
       - name: SonarCloud Quality Gate check
         id: sonarcloud-quality-gate
@@ -94,7 +118,7 @@ jobs:
         if: always()
         env:
           QG_STATUS: ${{ steps.sonarcloud-quality-gate.outputs.quality-gate-status }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
           SONAR_PROJECT_KEY: ${{ vars.SONAR_PROJECT_KEY }}
         run: |
           STATUS="passed"
@@ -351,11 +375,27 @@ jobs:
           name: snyk-results
         continue-on-error: true
 
+      - name: Resolve PR number for comment
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO:     ${{ github.repository }}
+          PR_NUM:   ${{ github.event.pull_request.number }}
+        run: |
+          if [ -n "$PR_NUM" ]; then
+            echo "number=$PR_NUM" >> "$GITHUB_OUTPUT"
+          else
+            NUM=$(curl -s -H "Authorization: token $GH_TOKEN" \
+              "https://api.github.com/repos/$REPO/pulls?state=open&head=$(echo $REPO | cut -d/ -f1):$(git rev-parse --abbrev-ref HEAD)&per_page=5" \
+              | python3 -c "import json,sys; prs=json.load(sys.stdin); print(prs[0]['number'] if prs else '')" 2>/dev/null)
+            echo "number=${NUM}" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build and upsert PR comment
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO:     ${{ github.repository }}
-          PR:       ${{ github.event.pull_request.number }}
+          PR:       ${{ steps.pr.outputs.number }}
         run: |
           python3 - <<'PYEOF'
           import json, os, re, textwrap, urllib.request, urllib.error
