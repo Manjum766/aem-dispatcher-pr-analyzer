@@ -1,0 +1,342 @@
+
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Branch Protection Setup — Fix "Waiting for status"</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, "Segoe UI", system-ui, sans-serif; font-size: 14px; line-height: 1.6; color: #1f2328; background: #fff; }
+  .page { max-width: 780px; margin: 0 auto; padding: 36px 24px 64px; }
+
+  h1 { font-size: 20px; font-weight: 700; margin-bottom: 4px; }
+  .subtitle { color: #57606a; font-size: 13px; margin-bottom: 28px; }
+
+  h2 { font-size: 15px; font-weight: 700; margin: 32px 0 12px; padding-bottom: 6px; border-bottom: 1px solid #e5e7eb; }
+  h3 { font-size: 13px; font-weight: 600; margin: 18px 0 6px; color: #1f2328; }
+
+  p  { margin-bottom: 10px; color: #1f2328; }
+
+  /* callouts */
+  .callout { border-left: 3px solid; border-radius: 0 4px 4px 0; padding: 10px 14px; margin-bottom: 14px; font-size: 13px; }
+  .callout-red    { border-color: #ef4444; background: #fef2f2; }
+  .callout-orange { border-color: #f97316; background: #fff7ed; }
+  .callout-green  { border-color: #22c55e; background: #f0fdf4; }
+  .callout-blue   { border-color: #3b82d4; background: #eff6ff; }
+  .callout strong { font-weight: 700; }
+
+  code { font-family: "SF Mono","Fira Mono","Consolas",monospace; font-size: 12px; background: #f0f2f5; padding: 1px 5px; border-radius: 3px; }
+  pre  { background: #f0f2f5; border: 1px solid #e5e7eb; border-radius: 6px; padding: 12px 14px; font-size: 12px; line-height: 1.55; margin-bottom: 12px; overflow-x: auto; }
+
+  table { width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: 13px; }
+  th { background: #f7f8fa; color: #57606a; font-weight: 600; text-align: left; padding: 7px 12px; border: 1px solid #e5e7eb; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+  td { padding: 8px 12px; border: 1px solid #e5e7eb; vertical-align: top; }
+  tr:nth-child(even) td { background: #fafbfc; }
+
+  /* step blocks */
+  .steps { counter-reset: step; }
+  .step  { display: flex; gap: 14px; margin-bottom: 20px; align-items: flex-start; }
+  .step-num {
+    counter-increment: step;
+    content: counter(step);
+    min-width: 28px; height: 28px;
+    border-radius: 50%;
+    background: #3b82d4; color: #fff;
+    font-size: 12px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0; margin-top: 2px;
+  }
+  .step-body { flex: 1; }
+  .step-body p { margin-bottom: 6px; }
+
+  /* screenshot mockup */
+  .mockup { border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; margin: 14px 0; }
+  .mockup-bar { background: #f7f8fa; padding: 8px 14px; font-size: 11px; color: #57606a; border-bottom: 1px solid #e5e7eb; font-weight: 600; }
+  .mockup-body { padding: 14px 16px; }
+
+  /* check name pill */
+  .check-name { display: inline-block; background: #f0f2f5; border: 1px solid #d0d7de; border-radius: 4px; padding: 2px 8px; font-family: "SF Mono","Fira Mono",monospace; font-size: 12px; margin: 2px 0; }
+  .check-required { background: #fff8c5; border-color: #d4a72c; }
+
+  /* status badge */
+  .status-waiting { color: #9a6700; background: #fff8c5; border: 1px solid #d4a72c; border-radius: 10px; padding: 1px 8px; font-size: 11px; font-weight: 600; }
+  .status-fail    { color: #cf222e; background: #ffebe9; border: 1px solid #ff818266; border-radius: 10px; padding: 1px 8px; font-size: 11px; font-weight: 600; }
+  .status-pass    { color: #1a7f37; background: #dafbe1; border: 1px solid #4ac26b66; border-radius: 10px; padding: 1px 8px; font-size: 11px; font-weight: 600; }
+
+  .tag { display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 11px; font-weight: 600; }
+  .tag-red    { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }
+  .tag-green  { background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; }
+  .tag-yellow { background: #fefce8; color: #854d0e; border: 1px solid #fde68a; }
+
+  .muted { color: #57606a; font-size: 12px; }
+  .mono  { font-family: "SF Mono","Fira Mono",monospace; font-size: 12px; }
+
+  .divider { border: none; border-top: 1px solid #e5e7eb; margin: 28px 0; }
+
+  .footer { margin-top: 48px; padding-top: 14px; border-top: 1px solid #e5e7eb; text-align: center; font-size: 12px; color: #57606a; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <h1>Fix "Waiting for status to be reported"</h1>
+  <p class="subtitle">Branch protection required status check names must match exactly what GitHub Actions reports. This guide explains why it happens and how to fix it in 3 minutes.</p>
+
+  
+  <h2>Why does "Waiting for status to be reported" appear?</h2>
+
+  <div class="callout callout-red">
+    <strong>Root cause:</strong> GitHub branch protection requires a status check by name. The name stored in branch protection settings <strong>must exactly match</strong> the check name that GitHub Actions reports. There are two common mismatches:
+  </div>
+
+  <table>
+    <tr><th>What you configured in branch protection</th><th>What GitHub Actions actually reports</th><th>Result</th></tr>
+    <tr>
+      <td><code>Dispatcher Rules Lint</code></td>
+      <td><code>AEM Dispatcher PR Analyzer / Dispatcher Rules Lint</code></td>
+      <td><span class="status-waiting">Waiting forever</span></td>
+    </tr>
+    <tr>
+      <td><code>SonarCloud Scan</code></td>
+      <td><code>AEM Dispatcher PR Analyzer / SonarCloud Scan</code><br /><span class="muted">+ SonarCloud App also posts:</span><br /><code>SonarCloud Code Analysis</code></td>
+      <td><span class="status-waiting">Waiting forever</span></td>
+    </tr>
+    <tr>
+      <td><code>Snyk Scan</code></td>
+      <td><code>AEM Dispatcher PR Analyzer / Snyk Scan</code></td>
+      <td><span class="status-waiting">Waiting forever</span></td>
+    </tr>
+    <tr>
+      <td><code>AEM Dispatcher PR Analyzer / Dispatcher Rules Lint</code></td>
+      <td><code>AEM Dispatcher PR Analyzer / Dispatcher Rules Lint</code></td>
+      <td><span class="status-pass">✓ Matches</span></td>
+    </tr>
+  </table>
+
+  <p class="muted">GitHub Actions status check names are always formatted as <strong>«workflow name» / «job name»</strong> — the workflow <code>name:</code> field at the top of the YAML, slash, the job <code>name:</code> field.</p>
+
+  <hr class="divider" />
+
+  
+  <h2>The exact check names to use</h2>
+  <p>These are the three names to add as required status checks. Copy them exactly — including capitalisation and spaces:</p>
+
+  <div class="mockup">
+    <div class="mockup-bar">Required status checks — copy these exactly</div>
+    <div class="mockup-body">
+      <p style="margin-bottom:8px"><span class="check-name check-required">AEM Dispatcher PR Analyzer / Dispatcher Rules Lint</span></p>
+      <p style="margin-bottom:8px"><span class="check-name check-required">AEM Dispatcher PR Analyzer / SonarCloud Scan</span></p>
+      <p style="margin-bottom:8px"><span class="check-name check-required">AEM Dispatcher PR Analyzer / Snyk Scan</span></p>
+      <p style="margin-top:12px" class="muted">
+        These come from: workflow <code>name: AEM Dispatcher PR Analyzer</code>  +  job <code>name: Dispatcher Rules Lint</code> etc.
+      </p>
+    </div>
+  </div>
+
+  <div class="callout callout-orange">
+    <strong>SonarCloud special case:</strong> The SonarCloud GitHub App also posts a separate check called <code>SonarCloud Code Analysis</code>. If you want that to block the merge too, add it as a fourth required check. But it is separate from the workflow job — you need both if you want both to gate the merge.
+  </div>
+
+  <hr class="divider" />
+
+  
+  <h2>Step-by-step: configure branch protection</h2>
+
+  <div class="steps">
+
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-body">
+        <p><strong>First, trigger a workflow run</strong> so GitHub has seen the check names.</p>
+        <p>Branch protection's search box only shows checks that have <em>already run at least once</em>. Push any commit to <code>test-scan-PR</code> (the commit <code>38cb906</code> you just pushed will trigger it). Wait for the Actions run to start — you don't need it to complete.</p>
+        <div class="callout callout-blue">If you try to add the check name before the workflow has ever run, GitHub shows "no results" in the search box. The commit was just pushed — wait ~30 seconds for the run to appear in Actions.</div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-body">
+        <p><strong>Open branch protection settings</strong></p>
+        <p>Navigate to:<br />
+        <code>https://github.com/Manjum766/aem-dispatcher-pr-analyzer-practice/settings/branches</code></p>
+        <p>Find the rule for <code>master</code> (or <code>main</code>) and click <strong>Edit</strong>. If no rule exists, click <strong>Add branch protection rule</strong> and set the branch name pattern to <code>master</code>.</p>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-body">
+        <p><strong>Enable "Require status checks to pass before merging"</strong></p>
+        <div class="mockup">
+          <div class="mockup-bar">Branch protection rule — master</div>
+          <div class="mockup-body">
+            <p style="margin-bottom:8px">☑ <strong>Require a pull request before merging</strong></p>
+            <p style="margin-bottom:8px">☑ <strong>Require status checks to pass before merging</strong></p>
+            <p style="margin-left:20px;margin-bottom:4px;font-size:12px;color:#57606a">☑ Require branches to be up to date before merging</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-num">4</div>
+      <div class="step-body">
+        <p><strong>Add the three required checks</strong> — type each name in the search box and select it:</p>
+        <div class="mockup">
+          <div class="mockup-bar">Status checks that are required</div>
+          <div class="mockup-body">
+            <p style="margin-bottom:6px;font-size:12px;color:#57606a">Search for status checks</p>
+            <p style="margin-bottom:6px"><span class="check-name check-required">AEM Dispatcher PR Analyzer / Dispatcher Rules Lint</span>  <span class="tag tag-red">Required</span></p>
+            <p style="margin-bottom:6px"><span class="check-name check-required">AEM Dispatcher PR Analyzer / SonarCloud Scan</span>  <span class="tag tag-red">Required</span></p>
+            <p style="margin-bottom:6px"><span class="check-name check-required">AEM Dispatcher PR Analyzer / Snyk Scan</span>  <span class="tag tag-red">Required</span></p>
+            <p style="margin-top:10px;font-size:12px;color:#57606a"><em>Optional — add this if you also want the SonarCloud GitHub App to gate the merge:</em></p>
+            <p><span class="check-name">SonarCloud Code Analysis</span>  <span class="tag tag-yellow">Optional</span></p>
+          </div>
+        </div>
+        <div class="callout callout-blue">
+          <strong>Tip:</strong> Type the first few letters — e.g. type <code>AEM</code> — and the search box will show all three workflow checks. Select each one individually.
+        </div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-num">5</div>
+      <div class="step-body">
+        <p><strong>Also enable these two settings</strong> (recommended):</p>
+        <div class="mockup">
+          <div class="mockup-bar">Additional protection settings</div>
+          <div class="mockup-body">
+            <p style="margin-bottom:6px">☑ <strong>Do not allow bypassing the above settings</strong> — prevents admins from merging without checks</p>
+            <p>☑ <strong>Require branches to be up to date before merging</strong> — ensures checks run against the latest base</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="step-num">6</div>
+      <div class="step-body">
+        <p><strong>Save the rule</strong> — click <strong>Save changes</strong> at the bottom of the page.</p>
+      </div>
+    </div>
+
+  </div>
+
+  <hr class="divider" />
+
+  
+  <h2>What the PR will look like after this is configured</h2>
+
+  <h3>When scans find issues (merge blocked)</h3>
+  <div class="mockup">
+    <div class="mockup-bar">Merging is blocked — required status checks failed</div>
+    <div class="mockup-body">
+      <p style="margin-bottom:8px;font-size:13px;font-weight:600;color:#cf222e">✗ 3 failing checks</p>
+      <table style="margin-bottom:0">
+        <tr>
+          <td><span class="check-name">AEM Dispatcher PR Analyzer / Dispatcher Rules Lint</span></td>
+          <td><span class="status-fail">✗ Failing</span></td>
+          <td class="muted">CRITICAL: /crx/* cached, /allowAuthorized "1"…</td>
+        </tr>
+        <tr>
+          <td><span class="check-name">AEM Dispatcher PR Analyzer / Snyk Scan</span></td>
+          <td><span class="status-fail">✗ Failing</span></td>
+          <td class="muted">Hardcoded password, SQL injection, CVEs</td>
+        </tr>
+        <tr>
+          <td><span class="check-name">AEM Dispatcher PR Analyzer / SonarCloud Scan</span></td>
+          <td><span class="status-fail">✗ Failing</span></td>
+          <td class="muted">Quality Gate: FAILED</td>
+        </tr>
+      </table>
+      <p style="margin-top:12px;padding:8px 12px;background:#ffebe9;border-radius:4px;font-size:12px;color:#cf222e;font-weight:600">
+        🔒 Merge pull request button is disabled
+      </p>
+    </div>
+  </div>
+
+  <h3>When all scans pass (merge allowed)</h3>
+  <div class="mockup">
+    <div class="mockup-bar">All checks have passed</div>
+    <div class="mockup-body">
+      <p style="margin-bottom:8px;font-size:13px;font-weight:600;color:#1a7f37">✓ 3 successful checks</p>
+      <table style="margin-bottom:0">
+        <tr>
+          <td><span class="check-name">AEM Dispatcher PR Analyzer / Dispatcher Rules Lint</span></td>
+          <td><span class="status-pass">✓ Passing</span></td>
+          <td class="muted">No CRITICAL/HIGH findings</td>
+        </tr>
+        <tr>
+          <td><span class="check-name">AEM Dispatcher PR Analyzer / Snyk Scan</span></td>
+          <td><span class="status-pass">✓ Passing</span></td>
+          <td class="muted">No secrets or high CVEs</td>
+        </tr>
+        <tr>
+          <td><span class="check-name">AEM Dispatcher PR Analyzer / SonarCloud Scan</span></td>
+          <td><span class="status-pass">✓ Passing</span></td>
+          <td class="muted">Quality Gate: PASSED</td>
+        </tr>
+      </table>
+      <p style="margin-top:12px;padding:8px 12px;background:#dafbe1;border-radius:4px;font-size:12px;color:#1a7f37;font-weight:600">
+        ✓ Merge pull request — button is enabled
+      </p>
+    </div>
+  </div>
+
+  <hr class="divider" />
+
+  
+  <h2>Troubleshooting</h2>
+  <table>
+    <tr><th>Symptom</th><th>Cause</th><th>Fix</th></tr>
+    <tr>
+      <td>Check name doesn't appear in search box</td>
+      <td>Workflow has never run on this repo / branch</td>
+      <td>Push any commit to trigger a run first, then re-open branch protection settings</td>
+    </tr>
+    <tr>
+      <td>Still shows "Waiting" after adding correct names</td>
+      <td>Old incorrect check name is still listed</td>
+      <td>Delete the old check name entry in branch protection and add the correct <code>AEM Dispatcher PR Analyzer / …</code> one</td>
+    </tr>
+    <tr>
+      <td>SonarCloud shows "Waiting" even though workflow passed</td>
+      <td>Two different checks: workflow job vs SonarCloud GitHub App</td>
+      <td>Use <code>AEM Dispatcher PR Analyzer / SonarCloud Scan</code> for the workflow job; add <code>SonarCloud Code Analysis</code> separately for the App check</td>
+    </tr>
+    <tr>
+      <td>Checks pass but merge button still locked</td>
+      <td>"Do not allow bypassing" is off, or a different required check is still failing</td>
+      <td>Check the full list of required checks in branch protection — there may be an old entry still listed</td>
+    </tr>
+    <tr>
+      <td>Workflow is cancelled mid-run</td>
+      <td>Concurrency group cancels previous run when new commit pushed</td>
+      <td>Expected behaviour — the new run takes over. Only the latest push matters.</td>
+    </tr>
+  </table>
+
+  <hr class="divider" />
+
+  
+  <h2>How GitHub status check names are formed</h2>
+  <pre><code># Workflow file
+name: AEM Dispatcher PR Analyzer   ← part 1 of the check name
+
+jobs:
+  dispatcher-lint:
+    name: Dispatcher Rules Lint     ← part 2 of the check name
+
+# GitHub reports this check as:
+# "AEM Dispatcher PR Analyzer / Dispatcher Rules Lint"</code></pre>
+
+  <p>The <strong>job id</strong> (<code>dispatcher-lint:</code>) is never used in the check name — only the <code>name:</code> field is. If a job has no <code>name:</code>, GitHub falls back to the job id.</p>
+
+  <div class="callout callout-green">
+    <strong>Quick verify:</strong> After the next workflow run completes, go to the PR → <em>Checks</em> tab → click any check → the URL will show the exact check name GitHub registered. That's what branch protection needs to match.
+  </div>
+
+  <div class="footer">Made with IBM Bob</div>
+</div>
+</body>
+</html>

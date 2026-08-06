@@ -1,0 +1,76 @@
+{
+  "status": "failed",
+  "total_findings": 8,
+  "critical": 3,
+  "high": 4,
+  "medium": 1,
+  "low": 0,
+  "score": 100,
+  "level": "CRITICAL",
+  "findings": [
+    {
+      "severity": "HIGH",
+      "rule": "DISP-008",
+      "title": "Authenticated content may be cached",
+      "details": "`/allowAuthorized \"1\"` instructs the dispatcher to cache responses for authenticated requests. This risks serving one user's private content to another.",
+      "file": "dispatcher/src/conf.dispatcher/cache.any",
+      "line": 6
+    },
+    {
+      "severity": "CRITICAL",
+      "rule": "DISP-005",
+      "title": "Cache allow-all with no deny overrides",
+      "details": "The cache rules contain `/glob \"*\" /type \"allow\"` as the only rule \u2014 every URL including admin paths will be cached. Add explicit deny overrides for `/crx/*`, `/system/*`, `/bin/*`, `/libs/*`, and `/conf/*`.",
+      "file": "dispatcher/src/conf.dispatcher/cache.any",
+      "line": 11
+    },
+    {
+      "severity": "HIGH",
+      "rule": "DISP-009",
+      "title": "/bin/* cached \u2014 Sling servlet endpoints cached",
+      "details": "Line 13: `/bin/*` \u2014 Caching `/bin/*` exposes all Sling servlet endpoints. Add a specific deny rule or remove this allow rule.",
+      "file": "dispatcher/src/conf.dispatcher/cache.any",
+      "line": 13
+    },
+    {
+      "severity": "CRITICAL",
+      "rule": "DISP-009",
+      "title": "/crx/* cached \u2014 AEM repository browser exposed",
+      "details": "Line 14: `/crx/*` \u2014 Caching `/crx/*` allows unauthenticated access to the CRX repository browser and package manager. Remove this rule entirely.",
+      "file": "dispatcher/src/conf.dispatcher/cache.any",
+      "line": 14
+    },
+    {
+      "severity": "CRITICAL",
+      "rule": "DISP-009",
+      "title": "/system/* cached \u2014 AEM system console exposed",
+      "details": "Line 15: `/system/*` \u2014 Caching `/system/*` exposes the Felix OSGi console and health-check endpoints. Remove this rule entirely.",
+      "file": "dispatcher/src/conf.dispatcher/cache.any",
+      "line": 15
+    },
+    {
+      "severity": "HIGH",
+      "rule": "DISP-010",
+      "title": "/libs/* cached \u2014 AEM internal path exposed",
+      "details": "Line 16: `/libs/*` is cached. `/libs/*` and `/conf/*` contain AEM framework files and OSGi configurations that should not be publicly cached.",
+      "file": "dispatcher/src/conf.dispatcher/cache.any",
+      "line": 16
+    },
+    {
+      "severity": "HIGH",
+      "rule": "DISP-010",
+      "title": "/conf/* cached \u2014 AEM internal path exposed",
+      "details": "Line 17: `/conf/*` is cached. `/libs/*` and `/conf/*` contain AEM framework files and OSGi configurations that should not be publicly cached.",
+      "file": "dispatcher/src/conf.dispatcher/cache.any",
+      "line": 17
+    },
+    {
+      "severity": "MEDIUM",
+      "rule": "DISP-005b",
+      "title": "All query parameters used as cache keys",
+      "details": "The `ignoreUrlParams` block contains `/glob \"*\" /type \"allow\"`, meaning every query parameter is included in the cache key. UTM/tracking params will fragment the cache and reduce hit rate. Explicitly ignore known tracking params.",
+      "file": "dispatcher/src/conf.dispatcher/cache.any",
+      "line": 20
+    }
+  ]
+}

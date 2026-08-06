@@ -155,3 +155,13 @@ tekton/
     dispatcher-lint.sh       # Dispatcher rule checks (bash)
     post-comment.sh          # GitHub comment upsert (bash + curl + jq)
 ```
+
+## Java Security & Quality Demo
+
+This repository also contains a small Maven-based Java module with intentionally vulnerable and low-quality code used to demonstrate:
+
+- SonarQube bugs
+- SonarQube code smells
+- Security hotspots
+- Snyk dependency vulnerabilities
+- PR review workflows

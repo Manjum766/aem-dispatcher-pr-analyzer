@@ -2,23 +2,33 @@
 {
   /docroot "/var/www/html"
 
-  /statfileslevel "0"
-  /allowAuthorized "1"
+  /statfileslevel "1"
+  /allowAuthorized "0"
   /serveStaleOnError "1"
 
   /rules
   {
-    /0001 { /glob "*" /type "allow" }
-    /0002 { /glob "/content/*" /type "allow" }
-    /0003 { /glob "/bin/*" /type "allow" }
-    /0004 { /glob "/crx/*" /type "allow" }
-    /0005 { /glob "/system/*" /type "allow" }
-    /0006 { /glob "/libs/*" /type "allow" }
-   // /0007 { /glob "/conf/*" /type "allow" }
+    # Deny sensitive AEM admin paths first (belt-and-suspenders)
+    /0001 { /glob "/crx/*"    /type "deny" }
+    /0002 { /glob "/system/*" /type "deny" }
+    /0003 { /glob "/bin/*"    /type "deny" }
+    /0004 { /glob "/libs/*"   /type "deny" }
+    /0005 { /glob "/conf/*"   /type "deny" }
+
+    # Allow public content paths
+    /0006 { /glob "/content/*"      /type "allow" }
+    /0007 { /glob "/etc/designs/*"  /type "allow" }
+    /0008 { /glob "/clientlibs/*"   /type "allow" }
   }
 
   /ignoreUrlParams
   {
-    /0001 { /glob "*" /type "allow" }
+    # Ignore common tracking params — they must not fragment the cache
+    /0001 { /glob "utm_*"  /type "allow" }
+    /0002 { /glob "gclid"  /type "allow" }
+    /0003 { /glob "fbclid" /type "allow" }
+    /0004 { /glob "_ga"    /type "allow" }
+    # All other params DO affect the cache key
+    /0005 { /glob "*"      /type "deny"  }
   }
 }
