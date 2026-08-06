@@ -1,0 +1,534 @@
+
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AEM Dispatcher PR Analyzer — Reference</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, "Segoe UI", system-ui, sans-serif; font-size: 14px; line-height: 1.6; color: #1f2328; background: #ffffff; }
+  .page { max-width: 860px; margin: 0 auto; padding: 40px 24px 64px; }
+
+  /* ── header ── */
+  .header { border-bottom: 2px solid #e5e7eb; padding-bottom: 20px; margin-bottom: 32px; }
+  .header h1 { font-size: 22px; font-weight: 700; color: #1f2328; }
+  .header p  { color: #57606a; margin-top: 4px; font-size: 13px; }
+  .badge-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; border: 1px solid; }
+  .badge-blue   { background: #eff6ff; color: #1d4ed8; border-color: #bfdbfe; }
+  .badge-green  { background: #f0fdf4; color: #166534; border-color: #bbf7d0; }
+  .badge-purple { background: #faf5ff; color: #6b21a8; border-color: #e9d5ff; }
+  .badge-orange { background: #fff7ed; color: #9a3412; border-color: #fed7aa; }
+
+  /* ── toc ── */
+  .toc { background: #f7f8fa; border: 1px solid #e5e7eb; border-radius: 6px; padding: 16px 20px; margin-bottom: 36px; }
+  .toc h2 { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: #57606a; margin-bottom: 10px; }
+  .toc ol  { padding-left: 18px; }
+  .toc li  { margin-bottom: 4px; }
+  .toc a   { color: #3b82d4; text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+
+  /* ── sections ── */
+  h2.section { font-size: 17px; font-weight: 700; color: #1f2328; margin: 40px 0 14px; padding-bottom: 6px; border-bottom: 1px solid #e5e7eb; }
+  h3.sub     { font-size: 14px; font-weight: 600; color: #1f2328; margin: 22px 0 8px; }
+
+  p  { margin-bottom: 10px; color: #1f2328; }
+  ul, ol { padding-left: 20px; margin-bottom: 10px; }
+  li { margin-bottom: 4px; }
+
+  /* ── tables ── */
+  table { width: 100%; border-collapse: collapse; margin-bottom: 18px; font-size: 13px; }
+  th { background: #f7f8fa; color: #57606a; font-weight: 600; text-align: left; padding: 8px 12px; border: 1px solid #e5e7eb; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+  td { padding: 8px 12px; border: 1px solid #e5e7eb; vertical-align: top; }
+  tr:nth-child(even) td { background: #fafbfc; }
+
+  /* ── code ── */
+  code { font-family: "SF Mono", "Fira Mono", "Consolas", monospace; font-size: 12px; background: #f0f2f5; padding: 1px 5px; border-radius: 3px; color: #1f2328; }
+  pre  { background: #f0f2f5; border: 1px solid #e5e7eb; border-radius: 6px; padding: 14px 16px; overflow-x: auto; font-size: 12px; line-height: 1.55; margin-bottom: 14px; }
+  pre code { background: none; padding: 0; font-size: 12px; }
+
+  /* ── callout boxes ── */
+  .callout { border-left: 3px solid; border-radius: 0 4px 4px 0; padding: 10px 14px; margin-bottom: 14px; font-size: 13px; }
+  .callout-red    { border-color: #ef4444; background: #fef2f2; }
+  .callout-orange { border-color: #f97316; background: #fff7ed; }
+  .callout-yellow { border-color: #eab308; background: #fefce8; }
+  .callout-blue   { border-color: #3b82d4; background: #eff6ff; }
+  .callout-green  { border-color: #22c55e; background: #f0fdf4; }
+  .callout strong { font-weight: 700; }
+
+  /* ── severity pills ── */
+  .sev { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; }
+  .sev-crit   { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }
+  .sev-high   { background: #fff7ed; color: #c2410c; border: 1px solid #fed7aa; }
+  .sev-medium { background: #fefce8; color: #92400e; border: 1px solid #fde68a; }
+  .sev-low    { background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; }
+
+  /* ── job flow diagram ── */
+  .flow { display: flex; align-items: flex-start; gap: 0; margin: 18px 0; flex-wrap: wrap; }
+  .flow-job { background: #f7f8fa; border: 1px solid #e5e7eb; border-radius: 6px; padding: 10px 14px; min-width: 140px; font-size: 12px; }
+  .flow-job .job-name { font-weight: 700; font-size: 13px; color: #1f2328; }
+  .flow-job .job-detail { color: #57606a; margin-top: 3px; }
+  .flow-arrow { display: flex; align-items: center; padding: 0 8px; color: #57606a; font-size: 18px; }
+  .flow-parallel { display: flex; flex-direction: column; gap: 6px; }
+
+  /* ── PR comment preview ── */
+  .pr-comment { border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; margin-bottom: 18px; }
+  .pr-comment-header { background: #f7f8fa; padding: 8px 14px; font-size: 12px; color: #57606a; border-bottom: 1px solid #e5e7eb; }
+  .pr-comment-body { padding: 14px 16px; font-size: 13px; }
+  .pr-comment-body table { margin-bottom: 0; }
+
+  /* ── step number ── */
+  .step-num { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 50%; background: #3b82d4; color: #fff; font-size: 11px; font-weight: 700; margin-right: 6px; flex-shrink: 0; }
+
+  .muted { color: #57606a; font-size: 12px; }
+  .mono  { font-family: "SF Mono", "Fira Mono", monospace; font-size: 12px; }
+
+  /* ── footer ── */
+  .footer { margin-top: 56px; padding-top: 16px; border-top: 1px solid #e5e7eb; text-align: center; font-size: 12px; color: #57606a; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  
+  <div class="header">
+    <h1>AEM Dispatcher PR Analyzer</h1>
+    <p>GitHub Actions security pipeline — SonarCloud · Snyk · Dispatcher Rules · PR Comment</p>
+    <div class="badge-row">
+      <span class="badge badge-blue">GitHub Actions</span>
+      <span class="badge badge-orange">SonarCloud</span>
+      <span class="badge badge-purple">Snyk</span>
+      <span class="badge badge-green">Java 11 · Maven</span>
+      <span class="badge badge-blue">branch: test-scan-PR</span>
+    </div>
+  </div>
+
+  
+  <div class="toc">
+    <h2>Contents</h2>
+    <ol>
+      <li><a href="#overview">Overview &amp; Pipeline Architecture</a></li>
+      <li><a href="#secrets">GitHub Secrets &amp; Variables Required</a></li>
+      <li><a href="#job1">Job 1 — Dispatcher Rules Lint</a></li>
+      <li><a href="#job2">Job 2 — SonarCloud SAST Scan</a></li>
+      <li><a href="#job3">Job 3 — Snyk SAST + Dependency CVEs</a></li>
+      <li><a href="#job4">Job 4 — Post PR Comment</a></li>
+      <li><a href="#dispatcher-rules">Dispatcher Rules Reference</a></li>
+      <li><a href="#java-bugs">Intentional Java Bugs (Demo)</a></li>
+      <li><a href="#sonar-config">sonar-project.properties Reference</a></li>
+      <li><a href="#permissions">Permissions Model</a></li>
+      <li><a href="#branch-protection">Branch Protection Setup</a></li>
+      <li><a href="#pr-comment">PR Comment Format</a></li>
+      <li><a href="#bugs-fixed">Bugs Fixed During Development</a></li>
+    </ol>
+  </div>
+
+  
+  <h2 class="section" id="overview">1. Overview &amp; Pipeline Architecture</h2>
+  <p>On every pull request (opened, synchronize, reopened) against this repository, four GitHub Actions jobs run in parallel and then consolidate results into a single upserted PR comment.</p>
+
+  <div class="flow">
+    <div class="flow-job">
+      <div class="job-name">PR opened / pushed</div>
+      <div class="job-detail">trigger: pull_request</div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-parallel">
+      <div class="flow-job">
+        <div class="job-name">⚙️ dispatcher-lint</div>
+        <div class="job-detail">Python · .any / .vhost / .farm</div>
+      </div>
+      <div class="flow-job">
+        <div class="job-name">🔍 sonarcloud-scan</div>
+        <div class="job-detail">Maven compile → sonar-scanner</div>
+      </div>
+      <div class="flow-job">
+        <div class="job-name">🔒 snyk-scan</div>
+        <div class="job-detail">SAST (SARIF) + dep CVEs</div>
+      </div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-job">
+      <div class="job-name">💬 post-comment</div>
+      <div class="job-detail">always() · upserts PR comment</div>
+    </div>
+  </div>
+
+  <table>
+    <tr><th>Pillar</th><th>Tool</th><th>What It Checks</th><th>Blocks Merge?</th></tr>
+    <tr><td>Dispatcher config</td><td>Custom Python script</td><td>Allow-all globs, missing deny-first, /crx /system exposed, /allowAuthorized, missing security headers</td><td>Yes — CRITICAL or HIGH findings → <code>sys.exit(1)</code></td></tr>
+    <tr><td>SAST &amp; code quality</td><td>SonarCloud</td><td>Java bugs, vulnerabilities, security hotspots, code smells</td><td>Yes — Quality Gate FAILED → job fails</td></tr>
+    <tr><td>Secrets &amp; dep CVEs</td><td>Snyk</td><td>Hardcoded secrets (SARIF), CVEs in jackson-databind / commons-collections / spring-web</td><td>Yes — any high SAST or critical/high CVE → <code>sys.exit(1)</code></td></tr>
+    <tr><td>PR feedback</td><td>GitHub REST API</td><td>Upsert single comment with summary table + expandable findings</td><td>No — informational only</td></tr>
+  </table>
+
+  
+  <h2 class="section" id="secrets">2. GitHub Secrets &amp; Variables Required</h2>
+  <p>Configure these in <strong>Settings → Secrets and variables → Actions</strong>:</p>
+  <table>
+    <tr><th>Name</th><th>Type</th><th>Value</th><th>Used by</th></tr>
+    <tr><td><code>SONAR_TOKEN</code></td><td>Secret</td><td>SonarCloud user token</td><td>sonarcloud-scan job</td></tr>
+    <tr><td><code>SNYK_TOKEN</code></td><td>Secret</td><td>Snyk API token</td><td>snyk-scan job</td></tr>
+    <tr><td><code>GITHUB_TOKEN</code></td><td>Built-in</td><td>Auto-provided by Actions</td><td>post-comment job</td></tr>
+    <tr><td><code>SONAR_PROJECT_KEY</code></td><td>Variable (vars.*)</td><td><code>aem-dispatcher-pr-analyzer</code></td><td>sonarcloud-scan (dashboard URL)</td></tr>
+  </table>
+  <div class="callout callout-blue">
+    <strong>Note:</strong> <code>SONAR_HOST_URL</code> is no longer a secret — it is hardcoded to <code>https://sonarcloud.io</code> in the workflow. On-prem SonarQube is not supported by this pipeline.
+  </div>
+
+  
+  <h2 class="section" id="job1">3. Job 1 — Dispatcher Rules Lint</h2>
+  <h3 class="sub">Script: <code>.github/scripts/dispatcher_analyzer.py</code></h3>
+  <p>Scans all <code>.any</code>, <code>.vhost</code>, and <code>.farm</code> files under <code>dispatcher/src/</code>. Emits <strong>GitHub Actions inline annotations</strong> (<code>::error file=…,line=…::</code>) that appear directly on changed lines in the PR Files tab.</p>
+
+  <h3 class="sub">Directory layout scanned</h3>
+  <table>
+    <tr><th>Path</th><th>File type</th><th>Rules checked</th></tr>
+    <tr><td><code>dispatcher/src/conf.dispatcher.d/filters/</code></td><td><code>*.any</code></td><td>DISP-001, DISP-002, DISP-003, DISP-004</td></tr>
+    <tr><td><code>dispatcher/src/conf.dispatcher/</code> (flat fallback)</td><td><code>*.any</code></td><td>DISP-005, DISP-008, DISP-009, DISP-010, DISP-005b</td></tr>
+    <tr><td><code>dispatcher/src/conf.d/available_vhosts/</code></td><td><code>*.vhost</code></td><td>DISP-006, DISP-007, DISP-GQL</td></tr>
+    <tr><td><code>dispatcher/src/conf.dispatcher.d/enabled_farms/</code></td><td><code>*.farm</code></td><td>DISP-008</td></tr>
+  </table>
+
+  <h3 class="sub">Fail / pass logic</h3>
+  <p>The script calls <code>sys.exit(1)</code> when any finding has severity <strong>CRITICAL</strong> or <strong>HIGH</strong>, failing the <code>dispatcher-lint</code> job and blocking the merge. Artifacts (<code>dispatcher-result.json</code>, <code>dispatcher-report.md</code>) are uploaded with <code>if: always()</code> so they persist even on failure.</p>
+
+  <h3 class="sub">Risk score</h3>
+  <table>
+    <tr><th>Severity</th><th>Score weight</th></tr>
+    <tr><td><span class="sev sev-crit">CRITICAL</span></td><td>40 points</td></tr>
+    <tr><td><span class="sev sev-high">HIGH</span></td><td>25 points</td></tr>
+    <tr><td><span class="sev sev-medium">MEDIUM</span></td><td>10 points</td></tr>
+    <tr><td><span class="sev sev-low">LOW</span></td><td>5 points</td></tr>
+  </table>
+  <p class="muted">Score is capped at 100. Level: 0 = CLEAN, &lt;25 = LOW, &lt;50 = MEDIUM, &lt;75 = HIGH, ≥75 = CRITICAL.</p>
+
+  
+  <h2 class="section" id="job2">4. Job 2 — SonarCloud SAST Scan</h2>
+
+  <h3 class="sub">Steps</h3>
+  <table>
+    <tr><th>#</th><th>Step</th><th>Detail</th></tr>
+    <tr><td>1</td><td>Checkout</td><td><code>fetch-depth: 0</code> — full history required for blame and new-code detection</td></tr>
+    <tr><td>2</td><td>Setup JDK 11</td><td>Temurin distribution via <code>actions/setup-java@v4</code></td></tr>
+    <tr><td>3</td><td>Maven compile</td><td><code>mvn -B compile --no-transfer-progress</code> in <code>java-demo/</code> — produces <code>target/classes</code> needed by Sonar Java analyser</td></tr>
+    <tr><td>4</td><td>SonarCloud Scan</td><td><code>SonarSource/sonarqube-scan-action@v5</code> — passes PR number, head branch, base branch as Sonar pull-request properties</td></tr>
+    <tr><td>5</td><td>Quality Gate check</td><td><code>SonarSource/sonarqube-quality-gate-action@v1</code> — <strong>no</strong> <code>continue-on-error</code>, so a FAILED gate fails the job</td></tr>
+    <tr><td>6</td><td>Write result JSON</td><td>Writes <code>sonar-result.json</code> with status / QG status / dashboard URL</td></tr>
+    <tr><td>7</td><td>Upload artifact</td><td><code>if: always()</code> — artifact survives job failure</td></tr>
+  </table>
+
+  <h3 class="sub"><code>sonar-project.properties</code> key settings</h3>
+  <pre><code>sonar.projectKey=aem-dispatcher-pr-analyzer
+sonar.organization=aem-dispatcher-pr-analyzer
+sonar.java.source=11
+sonar.java.binaries=java-demo/target/classes
+sonar.sources=java-demo/src/main/java
+sonar.tests=java-demo/src/test/java</code></pre>
+
+  <div class="callout callout-orange">
+    <strong>Common mistake:</strong> <code>sonar.projectKey=${SONAR_PROJECT_KEY}</code> — shell variable syntax is NOT expanded by sonar-scanner. The key must be a literal string in this file.
+  </div>
+
+  
+  <h2 class="section" id="job3">5. Job 3 — Snyk SAST + Dependency CVEs</h2>
+
+  <h3 class="sub">Two scan modes</h3>
+  <table>
+    <tr><th>Command</th><th>Output format</th><th>What it finds</th></tr>
+    <tr><td><code>snyk code test --sarif-file-output=snyk-code-raw.json .</code></td><td>SARIF</td><td>Java SAST: SQL injection, hardcoded passwords, weak Random, NPE — uses level: error/warning/note</td></tr>
+    <tr><td><code>snyk test --file=java-demo/pom.xml --json-file-output=snyk-maven-raw.json</code></td><td>JSON (vulnerabilities[])</td><td>CVEs in jackson-databind 2.9.8, commons-collections4 4.0, spring-web 5.2.0</td></tr>
+  </table>
+
+  <div class="callout callout-red">
+    <strong>Critical bug that was fixed:</strong> The old command used <code>--json</code> (stdout) and <code>--all-projects</code> together with <code>--file=</code>. These flags conflict — Snyk ignores <code>--file=</code> when <code>--all-projects</code> is set, finds no manifest at repo root, and its error output overwrites the JSON file. Use <code>--json-file-output=</code> instead which writes to a separate file.
+  </div>
+
+  <h3 class="sub">SARIF severity mapping</h3>
+  <p>Snyk SAST outputs SARIF where severity is expressed as <code>level</code>, not <code>severity</code>. The merge script maps them:</p>
+  <table>
+    <tr><th>SARIF level</th><th>Mapped to</th></tr>
+    <tr><td><code>error</code></td><td><span class="sev sev-high">high</span></td></tr>
+    <tr><td><code>warning</code></td><td><span class="sev sev-medium">medium</span></td></tr>
+    <tr><td><code>note</code></td><td><span class="sev sev-low">low</span></td></tr>
+  </table>
+
+  <h3 class="sub">Secrets detection</h3>
+  <p>Matched against <code>ruleId</code> in SARIF results. Keywords: <code>secret</code>, <code>credential</code>, <code>password</code>, <code>hardcoded</code>, <code>token</code>, <code>apikey</code>. The old approach stringified the entire result object — unreliable and produced false negatives.</p>
+
+  <h3 class="sub">Fail logic</h3>
+  <pre><code>failed = total_secrets &gt; 0 or dep_critical &gt; 0 or total_high &gt; 0</code></pre>
+  <p>Where <code>total_high = code_high (SAST) + dep_critical + dep_high (CVEs)</code>.</p>
+
+  
+  <h2 class="section" id="job4">6. Job 4 — Post PR Comment</h2>
+  <p>Runs with <code>needs: [dispatcher-lint, sonarcloud-scan, snyk-scan]</code> and <code>if: always()</code> — executes even when upstream jobs fail. Downloads all three artifacts, builds a consolidated Markdown comment, and upserts it using the GitHub REST API.</p>
+
+  <h3 class="sub">Upsert logic</h3>
+  <p>The comment body contains a hidden marker <code>&lt;!-- pr-review-agent-marker --&gt;</code>. On each run, the script fetches existing comments, finds one containing the marker, and PATCHes it. If none exists, it POSTs a new comment.</p>
+
+  <h3 class="sub">Graceful degradation</h3>
+  <p>Each result file is loaded with a <code>try/except</code> that returns <code>{"status": "did_not_complete"}</code> if the file is missing — so the comment always posts even if one scan failed entirely.</p>
+
+  
+  <h2 class="section" id="dispatcher-rules">7. Dispatcher Rules Reference</h2>
+  <table>
+    <tr><th>Rule</th><th>Severity</th><th>File type</th><th>Description</th></tr>
+    <tr>
+      <td><code>DISP-001</code></td>
+      <td><span class="sev sev-crit">CRITICAL</span></td>
+      <td>filter</td>
+      <td>Allow-all glob: <code>/glob "*" /type "allow"</code> — exposes every URL</td>
+    </tr>
+    <tr>
+      <td><code>DISP-002</code></td>
+      <td><span class="sev sev-high">HIGH</span></td>
+      <td>filter</td>
+      <td>First <code>/type</code> rule is not <code>"deny"</code> — deny-first policy not enforced</td>
+    </tr>
+    <tr>
+      <td><code>DISP-003</code></td>
+      <td><span class="sev sev-crit">CRITICAL</span></td>
+      <td>filter</td>
+      <td><code>/url "/crx/*"</code> or <code>/url "/system/*"</code> explicitly allowed — AEM admin paths exposed</td>
+    </tr>
+    <tr>
+      <td><code>DISP-004</code></td>
+      <td><span class="sev sev-high">HIGH</span></td>
+      <td>filter</td>
+      <td><code>/bin/*</code> allowed with no more-specific deny rule below it</td>
+    </tr>
+    <tr>
+      <td><code>DISP-005</code></td>
+      <td><span class="sev sev-crit">CRITICAL</span></td>
+      <td>cache</td>
+      <td>Cache allow-all (<code>/glob "*" /type "allow"</code>) with no deny overrides</td>
+    </tr>
+    <tr>
+      <td><code>DISP-005b</code></td>
+      <td><span class="sev sev-medium">MEDIUM</span></td>
+      <td>cache</td>
+      <td><code>ignoreUrlParams</code> block contains <code>/glob "*"</code> — all query params used as cache keys</td>
+    </tr>
+    <tr>
+      <td><code>DISP-006</code></td>
+      <td><span class="sev sev-medium">MEDIUM</span></td>
+      <td>vhost</td>
+      <td>Missing <code>Content-Security-Policy</code> header</td>
+    </tr>
+    <tr>
+      <td><code>DISP-007</code></td>
+      <td><span class="sev sev-medium">MEDIUM</span></td>
+      <td>vhost</td>
+      <td>Missing <code>X-Frame-Options</code> header</td>
+    </tr>
+    <tr>
+      <td><code>DISP-008</code></td>
+      <td><span class="sev sev-high">HIGH</span></td>
+      <td>cache / farm</td>
+      <td><code>/allowAuthorized "1"</code> — dispatcher caches authenticated responses, risks data leakage</td>
+    </tr>
+    <tr>
+      <td><code>DISP-009</code></td>
+      <td><span class="sev sev-crit">CRITICAL</span> / <span class="sev sev-high">HIGH</span></td>
+      <td>cache</td>
+      <td>Sensitive path explicitly cached: <code>/crx/*</code> or <code>/system/*</code> (CRITICAL), <code>/bin/*</code> (HIGH)</td>
+    </tr>
+    <tr>
+      <td><code>DISP-010</code></td>
+      <td><span class="sev sev-high">HIGH</span></td>
+      <td>cache</td>
+      <td>AEM internal paths cached: <code>/libs/*</code> or <code>/conf/*</code></td>
+    </tr>
+    <tr>
+      <td><code>DISP-GQL</code></td>
+      <td><span class="sev sev-medium">MEDIUM</span></td>
+      <td>vhost</td>
+      <td>GraphQL endpoint <code>/_cq_graphql</code> exposed — verify auth and persisted-query-only mode</td>
+    </tr>
+  </table>
+
+  <h3 class="sub">Current state of <code>dispatcher/src/conf.dispatcher/cache.any</code></h3>
+  <div class="callout callout-red">
+    <strong>Score: 100/100 CRITICAL</strong> — 3 critical, 4 high, 1 medium findings. This file is intentionally broken for demo purposes.
+  </div>
+  <table>
+    <tr><th>Line</th><th>Rule</th><th>Issue</th></tr>
+    <tr><td>6</td><td><code>DISP-008</code></td><td><code>/allowAuthorized "1"</code> — authenticated content cached</td></tr>
+    <tr><td>11</td><td><code>DISP-005</code></td><td><code>/glob "*" /type "allow"</code> with no deny overrides</td></tr>
+    <tr><td>13</td><td><code>DISP-009</code></td><td><code>/glob "/bin/*" /type "allow"</code> — Sling servlet endpoints cached</td></tr>
+    <tr><td>14</td><td><code>DISP-009</code></td><td><code>/glob "/crx/*" /type "allow"</code> — CRX repository browser cached</td></tr>
+    <tr><td>15</td><td><code>DISP-009</code></td><td><code>/glob "/system/*" /type "allow"</code> — Felix OSGi console cached</td></tr>
+    <tr><td>16</td><td><code>DISP-010</code></td><td><code>/glob "/libs/*" /type "allow"</code> — AEM framework files cached</td></tr>
+    <tr><td>17</td><td><code>DISP-010</code></td><td><code>/glob "/conf/*" /type "allow"</code> — OSGi configs cached</td></tr>
+    <tr><td>20</td><td><code>DISP-005b</code></td><td><code>ignoreUrlParams /glob "*"</code> — all query params as cache keys</td></tr>
+  </table>
+
+  
+  <h2 class="section" id="java-bugs">8. Intentional Java Bugs (Demo)</h2>
+  <p>These files exist in <code>java-demo/src/main/java/com/example/security/</code> to trigger SonarCloud and Snyk findings:</p>
+  <table>
+    <tr><th>File</th><th>Bug type</th><th>Expected tool</th></tr>
+    <tr><td><code>HardcodedPassword.java</code></td><td>Hardcoded credential: <code>PASSWORD = "admin123"</code></td><td>SonarCloud hotspot, Snyk SAST (ruleId: hardcoded)</td></tr>
+    <tr><td><code>SqlInjectionRisk.java</code></td><td>String-concatenated SQL query — SQL injection</td><td>SonarCloud vulnerability, Snyk SAST</td></tr>
+    <tr><td><code>WeakRandom.java</code></td><td><code>new Random()</code> used for OTP — should be <code>SecureRandom</code></td><td>SonarCloud hotspot</td></tr>
+    <tr><td><code>NullPointerIssue.java</code></td><td><code>value.length()</code> on potentially-null parameter</td><td>SonarCloud bug</td></tr>
+    <tr><td><code>CodeSmellExample.java</code></td><td>Deep if/else-if chain — cognitive complexity</td><td>SonarCloud code smell</td></tr>
+  </table>
+
+  <h3 class="sub">Intentionally vulnerable dependencies (<code>java-demo/pom.xml</code>)</h3>
+  <table>
+    <tr><th>Dependency</th><th>Version</th><th>Known CVEs</th></tr>
+    <tr><td><code>jackson-databind</code></td><td>2.9.8</td><td>Multiple deserialization RCE CVEs (critical)</td></tr>
+    <tr><td><code>commons-collections4</code></td><td>4.0</td><td>Unsafe deserialization gadget chains</td></tr>
+    <tr><td><code>spring-web</code></td><td>5.2.0.RELEASE</td><td>Spring4Shell (CVE-2022-22965) and others</td></tr>
+  </table>
+
+  
+  <h2 class="section" id="sonar-config">9. <code>sonar-project.properties</code> Reference</h2>
+  <pre><code># Project identity — must match SonarCloud project exactly
+sonar.projectKey=aem-dispatcher-pr-analyzer
+sonar.organization=aem-dispatcher-pr-analyzer
+sonar.projectName=AEM Dispatcher PR Analyzer
+sonar.projectVersion=1.0
+
+# Java module
+sonar.java.source=11
+sonar.java.binaries=java-demo/target/classes   # requires mvn compile first
+sonar.java.libraries=java-demo/target/dependency/*.jar
+sonar.sources=java-demo/src/main/java
+sonar.tests=java-demo/src/test/java
+sonar.test.inclusions=**/*Test.java
+
+# Exclusions
+sonar.exclusions=**/target/**,**/node_modules/**,**/dist/**,**/*.min.js
+
+# Coverage (JaCoCo)
+sonar.java.coveragePlugin=jacoco
+sonar.coverage.jacoco.xmlReportPaths=java-demo/target/site/jacoco/jacoco.xml</code></pre>
+
+  
+  <h2 class="section" id="permissions">10. Permissions Model</h2>
+  <p>Workflow-level permission is <code>contents: read</code> only. Each job is granted the minimum it needs:</p>
+  <table>
+    <tr><th>Job</th><th>permissions</th><th>Reason</th></tr>
+    <tr><td><code>dispatcher-lint</code></td><td><code>contents: read</code></td><td>Checkout only</td></tr>
+    <tr><td><code>sonarcloud-scan</code></td><td><code>contents: read</code><br /><code>statuses: write</code></td><td>Quality Gate action posts a commit status</td></tr>
+    <tr><td><code>snyk-scan</code></td><td><code>contents: read</code></td><td>Checkout only</td></tr>
+    <tr><td><code>post-comment</code></td><td><code>pull-requests: write</code></td><td>Creates / updates the PR comment</td></tr>
+  </table>
+  <div class="callout callout-blue">
+    <strong>Why this matters:</strong> The old workflow granted <code>pull-requests: write</code> and <code>statuses: write</code> at workflow level, meaning third-party actions (Snyk CLI, SonarSource actions) ran with write access to PRs and commit statuses. Job-level permissions scope each permission to only the job that needs it.
+  </div>
+
+  
+  <h2 class="section" id="branch-protection">11. Branch Protection Setup</h2>
+  <p>The workflow jobs fail with exit code 1 on findings, but the merge button only locks if you configure <strong>required status checks</strong>:</p>
+  <ol>
+    <li>Go to <strong>Settings → Branches → Add branch protection rule</strong> for <code>main</code> (or <code>master</code>)</li>
+    <li>Enable <strong>"Require status checks to pass before merging"</strong></li>
+    <li>Add these three checks:
+      <ul>
+        <li><code>Dispatcher Rules Lint</code></li>
+        <li><code>SonarCloud Scan</code></li>
+        <li><code>Snyk Scan</code></li>
+      </ul>
+    </li>
+    <li>Enable <strong>"Require branches to be up to date before merging"</strong></li>
+  </ol>
+
+  
+  <h2 class="section" id="pr-comment">12. PR Comment Format</h2>
+  <p>The comment is upserted on every push to the PR. It contains a hidden marker so it can be found and updated rather than re-created:</p>
+
+  <div class="pr-comment">
+    <div class="pr-comment-header">🤖 github-actions[bot] — PR Review Agent comment</div>
+    <div class="pr-comment-body">
+      <p><strong>🤖 PR Review Agent</strong></p>
+      <table>
+        <tr><th>Check</th><th>Status</th><th>Details</th></tr>
+        <tr><td>🔍 SonarCloud</td><td>❌ Failed</td><td>QG: FAILED — Dashboard link</td></tr>
+        <tr><td>🔒 Snyk</td><td>❌ Issues found</td><td>SAST: 3 high, 2 medium · CVEs: 5 critical, 8 high · Secrets: 1</td></tr>
+        <tr><td>⚙️ Dispatcher Rules</td><td>❌ Issues found</td><td>8 findings · 3 critical, 4 high · score: 100/100</td></tr>
+      </table>
+      <p style="margin-top:10px;color:#57606a;font-size:12px">
+        ▶ <strong>🔒 Snyk Findings</strong> (expandable)<br />
+          SAST findings (Java source code)<br />
+          - 🔴 [HIGH] <code>java/HardcodedPassword</code> — <code>HardcodedPassword.java:6</code> …<br />
+          Dependency CVEs<br />
+          - 🔴 [CRITICAL] <code>SNYK-JAVA-…</code> — <code>jackson-databind@2.9.8</code> …
+      </p>
+      <p style="color:#57606a;font-size:12px">
+        ▶ <strong>⚙️ Dispatcher Findings</strong> (expandable)<br />
+          - 🔴 [CRITICAL] <code>DISP-005</code> <code>cache.any</code>:11 — Cache allow-all with no deny overrides<br />
+          - 🔴 [CRITICAL] <code>DISP-009</code> <code>cache.any</code>:14 — /crx/* cached — AEM repository browser exposed<br />
+          - 🟠 [HIGH] <code>DISP-008</code> <code>cache.any</code>:6 — Authenticated content may be cached
+      </p>
+    </div>
+  </div>
+
+  
+  <h2 class="section" id="bugs-fixed">13. Bugs Fixed During Development</h2>
+
+  <h3 class="sub">Bug 1 — SonarQube job was commented out but steps were orphaned</h3>
+  <div class="callout callout-red">
+    The <code>sonarqube-scan:</code> job header and its <code>Checkout</code> step were commented out, but the remaining steps (Scan, Quality Gate, Upload) were not. They silently ran inside <code>dispatcher-lint</code> with no compiled Java, scanned nothing, and reported clean.
+  </div>
+  <p><strong>Fix:</strong> Restored the full <code>sonarcloud-scan:</code> job as a proper top-level job.</p>
+
+  <h3 class="sub">Bug 2 — <code>sonar-project.properties</code> pointed at non-existent paths</h3>
+  <div class="callout callout-orange">
+    <code>sonar.sources=core/src/main/java</code> — the <code>core/</code> directory does not exist. Sonar scanned zero files and reported zero issues.
+  </div>
+  <p><strong>Fix:</strong> Changed all paths to <code>java-demo/src/main/java</code>, <code>java-demo/target/classes</code>, etc.</p>
+
+  <h3 class="sub">Bug 3 — Quality Gate failure was swallowed</h3>
+  <div class="callout callout-orange">
+    <code>continue-on-error: true</code> on the Quality Gate step meant a FAILED gate produced a green ✅ check.
+  </div>
+  <p><strong>Fix:</strong> Removed <code>continue-on-error</code>. A failed gate now fails the job.</p>
+
+  <h3 class="sub">Bug 4 — Snyk SARIF severity fields were parsed as CVE format</h3>
+  <div class="callout callout-orange">
+    <code>snyk code test</code> outputs SARIF where severity is <code>level: "error"</code>, not <code>severity: "critical"</code>. The old code called <code>count_sev(code, "critical")</code> which always returned 0.
+  </div>
+  <p><strong>Fix:</strong> Added dedicated SARIF parser with level→severity mapping (<code>error→high</code>, <code>warning→medium</code>, <code>note→low</code>).</p>
+
+  <h3 class="sub">Bug 5 — <code>--all-projects</code> + <code>--file=</code> conflict in Snyk</h3>
+  <div class="callout callout-orange">
+    <code>snyk test --file=java-demo/pom.xml --all-projects</code> — these flags conflict. Snyk ignores <code>--file=</code>, finds no manifest at repo root, and its error message overwrites the JSON output file.
+  </div>
+  <p><strong>Fix:</strong> Removed <code>--all-projects</code>. Changed to <code>--json-file-output=snyk-maven-raw.json</code> which writes JSON to a separate file, keeping stderr/stdout clean.</p>
+
+  <h3 class="sub">Bug 6 — Cache file rules not checked for sensitive paths</h3>
+  <div class="callout callout-orange">
+    The analyzer had rules for <code>/crx/*</code> and <code>/system/*</code> only in filter files (checking <code>/url</code> patterns). In this repo the only config file is a cache file using <code>/glob</code> patterns — none of those rules ever fired.
+  </div>
+  <p><strong>Fix:</strong> Added <code>DISP-009</code> and <code>DISP-010</code> to <code>check_cache_file()</code> that scan <code>/glob</code> allow lines for sensitive paths. Added <code>DISP-008</code> check to cache files (it was only in <code>check_farm_file()</code>).</p>
+
+  <h3 class="sub">Bug 7 — <code>sonar.projectKey</code> used shell variable syntax</h3>
+  <div class="callout callout-orange">
+    <code>sonar.projectKey=${SONAR_PROJECT_KEY}</code> — sonar-scanner does not expand shell variables in properties files. The literal string <code>${SONAR_PROJECT_KEY}</code> was sent as the project key, matching nothing on SonarCloud.
+  </div>
+  <p><strong>Fix:</strong> Hardcoded the literal value: <code>sonar.projectKey=aem-dispatcher-pr-analyzer</code>. Added required <code>sonar.organization=aem-dispatcher-pr-analyzer</code> (mandatory for SonarCloud).</p>
+
+  <h3 class="sub">Bug 8 — Permissions granted at workflow level</h3>
+  <div class="callout callout-yellow">
+    <code>pull-requests: write</code> and <code>statuses: write</code> were at workflow level, granting write access to all jobs including third-party actions.
+  </div>
+  <p><strong>Fix:</strong> Moved to job-level permissions. Workflow default is <code>contents: read</code> only.</p>
+
+  <h3 class="sub">Bug 9 — Dispatcher job never exited non-zero</h3>
+  <div class="callout callout-orange">
+    The Python script computed <code>status: "failed"</code> in the JSON but always exited 0 — GitHub showed a green check even with CRITICAL findings.
+  </div>
+  <p><strong>Fix:</strong> Added <code>sys.exit(1)</code> at the end of the script when <code>status == "failed"</code>.</p>
+
+  
+  <div class="footer">
+    Made with IBM Bob
+  </div>
+
+</div>
+</body>
+</html>
