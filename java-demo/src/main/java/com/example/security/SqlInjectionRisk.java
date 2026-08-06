@@ -1,18 +1,17 @@
 package com.example.security;
 
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
-import java.sql.Statement;
+import java.sql.SQLException;
 
 public class SqlInjectionRisk {
 
-    public ResultSet findUser(Connection connection, String username) throws Exception {
-
-        Statement stmt = connection.createStatement();
-
-        // Sonar security hotspot
-        String query = "SELECT * FROM users WHERE username='" + username + "'";
-
-        return stmt.executeQuery(query);
+    // Use PreparedStatement with parameter binding — never concatenate user input into SQL
+    public ResultSet findUser(Connection connection, String username) throws SQLException {
+        PreparedStatement ps = connection.prepareStatement(
+                "SELECT * FROM users WHERE username = ?");
+        ps.setString(1, username);
+        return ps.executeQuery();
     }
 }

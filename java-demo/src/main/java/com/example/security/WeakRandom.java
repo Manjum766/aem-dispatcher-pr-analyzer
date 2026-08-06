@@ -1,12 +1,13 @@
 package com.example.security;
 
-import java.util.Random;
+import java.security.SecureRandom;
 
 public class WeakRandom {
 
+    // Use SecureRandom for all security-sensitive values (OTPs, tokens, salts)
+    private static final SecureRandom SECURE_RANDOM = new SecureRandom();
+
     public int generateOtp() {
-        // Sonar should suggest SecureRandom
-        Random random = new Random();
-        return 100000 + random.nextInt(900000);
+        return 100000 + SECURE_RANDOM.nextInt(900000);
     }
 }

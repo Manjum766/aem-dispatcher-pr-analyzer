@@ -2,24 +2,18 @@ package com.example.security;
 
 public class CodeSmellExample {
 
+    // Replace long if-else chain with a switch expression (Java 14+)
     public void process(int value) {
-
-        if (value == 1) {
-            System.out.println("one");
-        } else if (value == 2) {
-            System.out.println("two");
-        } else if (value == 3) {
-            System.out.println("three");
-        } else if (value == 4) {
-            System.out.println("four");
-        } else if (value == 5) {
-            System.out.println("five");
-        } else if (value == 6) {
-            System.out.println("six");
-        } else if (value == 7) {
-            System.out.println("seven");
-        } else {
-            System.out.println("other");
-        }
+        String label = switch (value) {
+            case 1 -> "one";
+            case 2 -> "two";
+            case 3 -> "three";
+            case 4 -> "four";
+            case 5 -> "five";
+            case 6 -> "six";
+            case 7 -> "seven";
+            default -> "other";
+        };
+        System.out.println(label);
     }
 }
