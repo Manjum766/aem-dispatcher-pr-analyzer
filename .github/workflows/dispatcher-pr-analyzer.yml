@@ -112,7 +112,7 @@ jobs:
           name: sonar-results
           path: sonar-result.json
 
-  # ── Job 3: Snyk secrets + dependency CVE scan ────────────────────────────────
+  # ── Job 3: Snyk SAST + dependency CVE scan ───────────────────────────────────
   snyk-scan:
     name: Snyk Scan
     runs-on: ubuntu-latest
@@ -134,17 +134,21 @@ jobs:
       - name: Authenticate Snyk
         run: snyk auth ${{ secrets.SNYK_TOKEN }}
 
-      - name: Snyk code test (SAST)
+      # snyk code test → SARIF output (catches Java SAST: SQL injection,
+      # hardcoded secrets, weak crypto, NPE, etc.)
+      - name: Snyk code test — SAST (Java + all sources)
         id: snyk-code
         continue-on-error: true
-        run: snyk code test --json . > snyk-code-raw.json 2>&1; echo "snyk_code_exit=$?" >> "$GITHUB_ENV"
+        run: snyk code test --sarif-file-output=snyk-code-raw.json . || true
 
-      - name: Snyk test — Maven (pom.xml)
+      # snyk test → dependency CVE scan (jackson-databind 2.9.8,
+      # commons-collections4 4.0, spring-web 5.2.0 all have known CVEs)
+      - name: Snyk test — Maven dependency CVEs
         id: snyk-maven
         continue-on-error: true
         run: |
           if [ -f java-demo/pom.xml ]; then
-            snyk test --file=java-demo/pom.xml --all-projects --json > snyk-maven-raw.json 2>&1
+            snyk test --file=java-demo/pom.xml --json-file-output=snyk-maven-raw.json || true
           else
             echo '{"vulnerabilities":[]}' > snyk-maven-raw.json
           fi
@@ -154,7 +158,7 @@ jobs:
         continue-on-error: true
         run: |
           if [ -f ui.frontend.widgets/package.json ]; then
-            snyk test --file=ui.frontend.widgets/package.json --json > snyk-widgets-raw.json 2>&1
+            snyk test --file=ui.frontend.widgets/package.json --json-file-output=snyk-widgets-raw.json || true
           else
             echo '{"vulnerabilities":[]}' > snyk-widgets-raw.json
           fi
@@ -164,7 +168,7 @@ jobs:
         continue-on-error: true
         run: |
           if [ -f ui.frontend.idl/package.json ]; then
-            snyk test --file=ui.frontend.idl/package.json --json > snyk-idl-raw.json 2>&1
+            snyk test --file=ui.frontend.idl/package.json --json-file-output=snyk-idl-raw.json || true
           else
             echo '{"vulnerabilities":[]}' > snyk-idl-raw.json
           fi
@@ -185,72 +189,123 @@ jobs:
               except Exception:
                   return {}
 
-          code    = load("snyk-code-raw.json")
-          maven   = load("snyk-maven-raw.json")
+          code    = load("snyk-code-raw.json")   # SARIF from snyk code test
+          maven   = load("snyk-maven-raw.json")  # JSON from snyk test
           widgets = load("snyk-widgets-raw.json")
           idl     = load("snyk-idl-raw.json")
 
-          def count_sev(data, sev):
-              vulns = data.get("vulnerabilities", [])
-              if not vulns and "runs" in data:
-                  vulns = [r for run in data.get("runs", []) for r in run.get("results", [])]
-              return sum(1 for v in vulns if (v.get("severity") or v.get("level", "")).lower() == sev)
+          # ── Parse SARIF (snyk code output) ────────────────────────────────
+          # SARIF uses level: "error" | "warning" | "note" — not critical/high/medium/low.
+          # Map them: error→high, warning→medium, note→low.
+          SARIF_LEVEL_MAP = {"error": "high", "warning": "medium", "note": "low", "none": "low"}
 
-          def get_issues(data, source):
-              vulns = data.get("vulnerabilities", [])
-              if not vulns and "runs" in data:
-                  vulns = [r for run in data.get("runs", []) for r in run.get("results", [])]
+          def sarif_results(data):
+              """Flatten all results from a SARIF document."""
+              return [r for run in data.get("runs", []) for r in run.get("results", [])]
+
+          def sarif_severity(result):
+              raw = (result.get("level") or "warning").lower()
+              return SARIF_LEVEL_MAP.get(raw, "medium")
+
+          def sarif_location(result):
+              """Return 'file:line' string or empty string."""
+              try:
+                  loc = result["locations"][0]["physicalLocation"]
+                  path = loc["artifactLocation"]["uri"]
+                  line = loc.get("region", {}).get("startLine", 0)
+                  return f"{path}:{line}" if line else path
+              except (KeyError, IndexError):
+                  return ""
+
+          def sarif_issues(data, source):
+              issues = []
+              for r in sarif_results(data):
+                  sev = sarif_severity(r)
+                  issues.append({
+                      "id":       r.get("ruleId") or "unknown",
+                      "title":    (r.get("message") or {}).get("text") or "No title",
+                      "severity": sev,
+                      "source":   source,
+                      "location": sarif_location(r),
+                  })
+              return issues
+
+          # ── Parse snyk test JSON (dependency CVEs) ────────────────────────
+          def dep_vulns(data):
+              return data.get("vulnerabilities", [])
+
+          def count_sev(vulns, sev):
+              return sum(1 for v in vulns if v.get("severity", "").lower() == sev)
+
+          def dep_issues(data, source):
               return [
                   {
-                      "id":       v.get("id") or v.get("ruleId") or "unknown",
-                      "title":    v.get("title") or (v.get("message") or {}).get("text") or "No title",
-                      "severity": (v.get("severity") or v.get("level") or "unknown").lower(),
+                      "id":       v.get("id") or "unknown",
+                      "title":    v.get("title") or v.get("packageName") or "No title",
+                      "severity": v.get("severity", "unknown").lower(),
                       "source":   source,
+                      "location": f"{v.get('packageName', '')}@{v.get('version', '')}",
                   }
-                  for v in vulns[:20]
+                  for v in dep_vulns(data)[:20]
               ]
 
-          def secrets_count(data):
-              vulns = data.get("vulnerabilities", [])
-              if not vulns and "runs" in data:
-                  vulns = [r for run in data.get("runs", []) for r in run.get("results", [])]
-              return sum(
-                  1 for v in vulns
-                  if any(kw in str(v).lower() for kw in ("secret", "credential", "token", "password", "key"))
-              )
+          # ── Count SAST issues from snyk code ──────────────────────────────
+          sarif_all    = sarif_results(code)
+          code_high    = sum(1 for r in sarif_all if sarif_severity(r) == "high")
+          code_medium  = sum(1 for r in sarif_all if sarif_severity(r) == "medium")
+          code_low     = sum(1 for r in sarif_all if sarif_severity(r) == "low")
 
-          critical = sum(count_sev(d, "critical") for d in [maven, widgets, idl])
-          high     = sum(count_sev(d, "high")     for d in [maven, widgets, idl])
-          medium   = sum(count_sev(d, "medium")   for d in [maven, widgets, idl])
-          low      = sum(count_sev(d, "low")      for d in [maven, widgets, idl])
-          secrets  = secrets_count(code)
-
-          issues = (
-              get_issues(code,    "code")
-            + get_issues(maven,   "maven")
-            + get_issues(widgets, "ui.frontend.widgets")
-            + get_issues(idl,     "ui.frontend.idl")
+          # Secrets: ruleId contains keywords like HardcodedSecret, Credentials, etc.
+          SECRET_RULE_KEYWORDS = ("secret", "credential", "password", "hardcoded", "token", "apikey")
+          code_secrets = sum(
+              1 for r in sarif_all
+              if any(kw in (r.get("ruleId") or "").lower() for kw in SECRET_RULE_KEYWORDS)
           )
 
-          failed = secrets > 0 or critical > 0 or high > 0
+          # ── Count dependency CVEs ─────────────────────────────────────────
+          mvn_vulns  = dep_vulns(maven)
+          wid_vulns  = dep_vulns(widgets)
+          idl_vulns  = dep_vulns(idl)
+          all_dep    = mvn_vulns + wid_vulns + idl_vulns
+
+          dep_critical = count_sev(all_dep, "critical")
+          dep_high     = count_sev(all_dep, "high")
+          dep_medium   = count_sev(all_dep, "medium")
+          dep_low      = count_sev(all_dep, "low")
+
+          # ── Totals ────────────────────────────────────────────────────────
+          total_high   = code_high   + dep_critical + dep_high
+          total_medium = code_medium + dep_medium
+          total_low    = code_low    + dep_low
+          total_secrets = code_secrets
+
+          all_issues = (
+              sarif_issues(code, "java-sast")
+            + dep_issues(maven,   "maven-deps")
+            + dep_issues(widgets, "ui.frontend.widgets")
+            + dep_issues(idl,     "ui.frontend.idl")
+          )
+
+          failed = total_secrets > 0 or dep_critical > 0 or total_high > 0
           status = "failed" if failed else "passed"
 
           result = {
-              "status":         status,
-              "secrets_found":  secrets,
-              "critical_vulns": critical,
-              "high_vulns":     high,
-              "medium_vulns":   medium,
-              "low_vulns":      low,
-              "issues":         issues[:20],
+              "status":          status,
+              "secrets_found":   total_secrets,
+              "sast_high":       code_high,
+              "sast_medium":     code_medium,
+              "critical_vulns":  dep_critical,
+              "high_vulns":      dep_high,
+              "medium_vulns":    dep_medium,
+              "low_vulns":       dep_low,
+              "issues":          all_issues[:30],
           }
           pathlib.Path("snyk-result.json").write_text(json.dumps(result, indent=2))
           print("Wrote snyk-result.json")
           print(json.dumps(result, indent=2))
 
-          # Exit non-zero so the snyk-scan job itself fails and blocks merge
           if failed:
-              print("::error::Snyk found critical/high vulnerabilities or exposed secrets — merge blocked.")
+              print("::error::Snyk found vulnerabilities or secrets — merge blocked.")
               sys.exit(1)
           PYEOF
 
@@ -342,31 +397,53 @@ jobs:
           snyk_status  = snyk.get("status", "did_not_complete")
           snyk_badge   = {"passed": "✅ Passed", "failed": "❌ Issues found"}.get(snyk_status, "⚠️ Scan did not complete")
           snyk_detail  = (
-              f"{snyk.get('critical_vulns','?')} critical, {snyk.get('high_vulns','?')} high CVEs; "
-              f"{snyk.get('secrets_found','?')} secrets found"
+              f"SAST: {snyk.get('sast_high','?')} high, {snyk.get('sast_medium','?')} medium · "
+              f"CVEs: {snyk.get('critical_vulns','?')} critical, {snyk.get('high_vulns','?')} high · "
+              f"Secrets: {snyk.get('secrets_found','?')}"
           )
 
           # ── Dispatcher row ────────────────────────────────────────────────
           disp_status  = disp.get("status", "did_not_complete")
           disp_badge   = {"passed": "✅ Clean", "warnings": "⚠️ Warnings", "failed": "❌ Issues found"}.get(disp_status, "⚠️ Scan did not complete")
           disp_detail  = (
-              f"{disp.get('total_findings','?')} findings "
-              f"(score: {disp.get('score','?')}/100 {disp.get('level','')})"
+              f"{disp.get('total_findings','?')} findings · "
+              f"{disp.get('critical','?')} critical, {disp.get('high','?')} high · "
+              f"score: {disp.get('score','?')}/100"
           )
 
           # ── Snyk findings detail block ────────────────────────────────────
           snyk_issues = snyk.get("issues", [])
-          snyk_rows = "\n".join(
-              f"- **[{i['severity'].upper()}]** `{i['id']}` — {i['title']} ({i['source']})"
-              for i in snyk_issues
-          ) if snyk_issues else "No issues found."
+          SEV_ICON = {"high": "🔴", "critical": "🔴", "medium": "🟠", "low": "🟡"}
+          if snyk_issues:
+              sast  = [i for i in snyk_issues if i.get("source") == "java-sast"]
+              deps  = [i for i in snyk_issues if i.get("source") != "java-sast"]
+              parts = []
+              if sast:
+                  parts.append("**SAST findings (Java source code)**")
+                  for i in sast:
+                      loc = f" `{i['location']}`" if i.get("location") else ""
+                      parts.append(f"- {SEV_ICON.get(i['severity'],'⚪')} **[{i['severity'].upper()}]** `{i['id']}` —{loc} {i['title']}")
+              if deps:
+                  parts.append("\n**Dependency CVEs**")
+                  for i in deps:
+                      loc = f" `{i['location']}`" if i.get("location") else ""
+                      parts.append(f"- {SEV_ICON.get(i['severity'],'⚪')} **[{i['severity'].upper()}]** `{i['id']}` —{loc} {i['title']} ({i['source']})")
+              snyk_rows = "\n".join(parts)
+          else:
+              snyk_rows = "No issues found."
 
           # ── Dispatcher findings detail block ──────────────────────────────
           disp_findings = disp.get("findings", [])
-          disp_rows = "\n".join(
-              f"- **{f['severity']}** `{f['rule']}` `{f['file']}`:{f['line']} — {f.get('message', f.get('details',''))}"
-              for f in disp_findings
-          ) if disp_findings else "No issues found."
+          DISP_ICON = {"CRITICAL": "🔴", "HIGH": "🟠", "MEDIUM": "🟡", "LOW": "🔵"}
+          if disp_findings:
+              disp_rows = "\n".join(
+                  f"- {DISP_ICON.get(f['severity'],'⚪')} **[{f['severity']}]** `{f['rule']}` "
+                  f"`{f['file']}`:{f['line']} — **{f['title']}**  \n"
+                  f"  {f.get('details','')}"
+                  for f in disp_findings
+              )
+          else:
+              disp_rows = "No issues found."
 
           body = f"""## 🤖 PR Review Agent
 
@@ -376,12 +453,12 @@ jobs:
           | 🔒 Snyk | {snyk_badge} | {snyk_detail} |
           | ⚙️ Dispatcher Rules | {disp_badge} | {disp_detail} |
 
-          <details><summary>Snyk Findings</summary>
+          <details><summary>🔒 Snyk Findings</summary>
 
           {snyk_rows}
           </details>
 
-          <details><summary>Dispatcher Findings</summary>
+          <details><summary>⚙️ Dispatcher Findings</summary>
 
           {disp_rows}
           </details>
